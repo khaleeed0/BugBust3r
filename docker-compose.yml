@@ -1,0 +1,76 @@
+version: '3.8'
+
+services:
+  # Redis
+  redis:
+    image: redis:7-alpine
+    container_name: security_scanner_redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # FastAPI Backend
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: security_scanner_backend
+    environment:
+      DATABASE_URL: postgresql://postgres:1234@host.docker.internal:5432/Bugbust3r
+      REDIS_URL: redis://redis:6379/0
+      DOCKER_SOCKET: unix://var/run/docker.sock
+      SECRET_KEY: your-secret-key-change-in-production
+    volumes:
+      - ./backend:/app
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - "8000:8000"
+    depends_on:
+      redis:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  # Celery Worker
+  celery_worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: security_scanner_worker
+    environment:
+      DATABASE_URL: postgresql://postgres:1234@host.docker.internal:5432/Bugbust3r
+      REDIS_URL: redis://redis:6379/0
+      DOCKER_SOCKET: unix://var/run/docker.sock
+    volumes:
+      - ./backend:/app
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      redis:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    command: celery -A app.services.task_queue.celery_app worker --loglevel=info --queues=scans
+
+  # React Frontend
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: security_scanner_frontend
+    environment:
+      VITE_API_URL: http://localhost:8000
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    depends_on:
+      - backend
+    command: npm run dev
+
+
