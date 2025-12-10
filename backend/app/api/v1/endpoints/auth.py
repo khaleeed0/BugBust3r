@@ -130,10 +130,19 @@ async def login(
     """Login and get access token"""
     user = db.query(User).filter(User.username == form_data.username).first()
     
-    if not user or not verify_password(form_data.password, user.password_hash):
+    # Check if user exists first
+    if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username or password",
+            detail="User not found. No user exists with this username.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    # User exists, now check password
+    if not verify_password(form_data.password, user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect password. Please check your password and try again.",
             headers={"WWW-Authenticate": "Bearer"},
         )
     

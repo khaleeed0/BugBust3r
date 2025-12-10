@@ -26,22 +26,43 @@ export default function Login() {
       navigate('/dashboard')
     } catch (error) {
       console.error('Login error:', error)
+      console.error('Error response:', error.response)
+      console.error('Error response data:', error.response?.data)
       
-      // Handle different types of errors
+      // Handle different types of errors with specific messages
       let errorMessage = 'Login failed. Please try again.'
+      let errorType = 'generic'
       
       if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
         errorMessage = 'Request timeout. Please check your connection and try again.'
+        errorType = 'timeout'
       } else if (error.code === 'ERR_NETWORK' || error.message?.includes('Network Error')) {
         errorMessage = 'Network error. Please ensure the backend server is running on http://localhost:8000'
+        errorType = 'network'
       } else if (error.response) {
-        // Server responded with error
-        errorMessage = error.response.data?.detail || error.response.data?.message || `Server error: ${error.response.status}`
+        // Server responded with error - check for specific authentication errors
+        const detail = error.response.data?.detail || error.response.data?.message || ''
+        console.log('Error detail from server:', detail)
+        
+        if (detail.includes('User not found') || detail.includes('No user exists')) {
+          errorMessage = `❌ User not found. No account exists with username "${username.trim()}". Please check your username or register a new account.`
+          errorType = 'user_not_found'
+        } else if (detail.includes('Incorrect password') || (detail.includes('password') && !detail.includes('User not found'))) {
+          errorMessage = `❌ Incorrect password. The password you entered is wrong. Please check your password and try again.`
+          errorType = 'wrong_password'
+        } else {
+          errorMessage = detail || `Server error: ${error.response.status}`
+          errorType = 'server_error'
+        }
       } else if (error.message) {
         errorMessage = error.message
       }
       
-      toast.error(errorMessage)
+      console.log('Displaying error message:', errorMessage)
+      toast.error(errorMessage, {
+        autoClose: errorType === 'user_not_found' || errorType === 'wrong_password' ? 6000 : 3000,
+        position: 'top-right'
+      })
     } finally {
       setLoading(false)
     }

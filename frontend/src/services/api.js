@@ -61,10 +61,15 @@ api.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401) {
-      // Unauthorized - clear token and redirect to login
-      localStorage.removeItem('token')
-      localStorage.removeItem('user')
-      window.location.href = '/login'
+      // Don't redirect if we're already on login/register page (let those pages handle the error)
+      const currentPath = window.location.pathname
+      if (currentPath !== '/login' && currentPath !== '/register') {
+        // Unauthorized for authenticated requests - clear token and redirect to login
+        localStorage.removeItem('token')
+        localStorage.removeItem('user')
+        window.location.href = '/login'
+      }
+      // If on login/register page, just reject the promise so the page can handle it
     }
     return Promise.reject(error)
   }

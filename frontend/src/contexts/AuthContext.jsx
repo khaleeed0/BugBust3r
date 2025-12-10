@@ -45,30 +45,35 @@ export function AuthProvider({ children }) {
     params.append('username', username)
     params.append('password', password)
 
-    const response = await api.post('/auth/login', params, {
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded'
-      }
-    })
-    const { access_token } = response.data
-    
-    localStorage.setItem('token', access_token)
-    
-    // Get user info from database
     try {
-      const userResponse = await api.get('/auth/me')
-      const userData = userResponse.data
-      setUser(userData)
-      localStorage.setItem('user', JSON.stringify(userData))
+      const response = await api.post('/auth/login', params, {
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded'
+        }
+      })
+      const { access_token } = response.data
+      
+      localStorage.setItem('token', access_token)
+      
+      // Get user info from database
+      try {
+        const userResponse = await api.get('/auth/me')
+        const userData = userResponse.data
+        setUser(userData)
+        localStorage.setItem('user', JSON.stringify(userData))
+      } catch (error) {
+        // If /me fails, clear token and throw error
+        localStorage.removeItem('token')
+        localStorage.removeItem('user')
+        console.error('Failed to get user info after login:', error)
+        throw new Error('Login successful but could not retrieve user information. Please try again.')
+      }
+      
+      return response.data
     } catch (error) {
-      // If /me fails, clear token and throw error
-      localStorage.removeItem('token')
-      localStorage.removeItem('user')
-      console.error('Failed to get user info after login:', error)
-      throw new Error('Login successful but could not retrieve user information. Please try again.')
+      // Re-throw the error so Login page can handle it with specific messages
+      throw error
     }
-    
-    return response.data
   }
 
   const register = async (email, username, password, fullName) => {
