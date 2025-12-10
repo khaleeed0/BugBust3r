@@ -521,11 +521,31 @@ class SemgrepTool(SecurityTool):
         
         scan_path = source_path or "/source"
         volumes = {}
-        
-        # If target_url is provided (localhost), create test files with vulnerabilities
-        # that Semgrep will definitely detect
         empty_json = '{"results":[]}'
-        if target_url and not source_path:
+        
+        # Priority 1: If source_path is provided, scan real source code
+        # Note: We don't check os.path.exists() here because we're in a Linux container
+        # and the path is on the Windows host. Docker will handle mounting it.
+        if source_path and source_path.strip():
+            # Normalize Windows path separators for Docker
+            # Docker on Windows can handle both \ and /, but let's normalize
+            normalized_path = source_path.replace('\\', '/')
+            # Remove trailing slash if present
+            normalized_path = normalized_path.rstrip('/')
+            
+            volumes[source_path] = {"bind": "/source", "mode": "ro"}
+            # Use 'auto' config which automatically detects language and uses appropriate security rules
+            # This works better for C#, Python, JavaScript, etc. than just p/security-audit
+            # Add --max-memory and --timeout to prevent hanging on large codebases
+            command = (
+                "sh -c '"
+                "semgrep --config=auto --config=p/security-audit --json --output=/output/semgrep.json --max-memory 4000 --timeout 240 /source 2>&1 || true && "
+                "if [ -f /output/semgrep.json ]; then cat /output/semgrep.json; else echo '" + empty_json + "'; fi"
+                "'"
+            )
+            logger.info(f"Scanning real source code from: {source_path} (mounted to /source in container)")
+        # Priority 2: If target_url is provided but no source_path, create test files
+        elif target_url and not source_path:
             # For localhost URL testing, create test files with known vulnerabilities
             # Use a more reliable method to create files with proper formatting
             # We'll use Python's multi-line string approach via a script
@@ -560,15 +580,6 @@ class SemgrepTool(SecurityTool):
                 "'"
             )
             volumes = {}
-        elif source_path and os.path.exists(source_path):
-            # Real source code scan
-            volumes[source_path] = {"bind": "/source", "mode": "ro"}
-            command = (
-                "sh -c '"
-                "semgrep --config=p/security-audit --json --output=/output/semgrep.json /source 2>&1 || true && "
-                "cat /output/semgrep.json 2>/dev/null || echo '" + empty_json + "'"
-                "'"
-            )
         else:
             # Default: use security rules
             command = (

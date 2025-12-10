@@ -45,6 +45,7 @@ class ScanResponse(BaseModel):
 class LocalScanRequest(BaseModel):
     target_url: str
     label: Optional[str] = "Local Host"
+    source_path: Optional[str] = None  # Optional path to source code directory to scan
 
 
 class LocalScanResponse(BaseModel):
@@ -191,21 +192,35 @@ async def run_local_testing_scan(
     normalized_url = parsed.geturl()
 
     # Find or create target
+    # First check if target with this URL exists (regardless of user, since URL is unique)
     target = db.query(Target)\
-        .filter(Target.url == normalized_url, Target.user_id == current_user.id)\
+        .filter(Target.url == normalized_url)\
         .first()
 
     if not target:
-        target = Target(
-            user_id=current_user.id,
-            url=normalized_url,
-            name=scan_data.label or "Local Host",
-            description="Auto-created for LocalHostTesting",
-            asset_value="low"
-        )
-        db.add(target)
-        db.commit()
-        db.refresh(target)
+        # Target doesn't exist, create new one
+        try:
+            target = Target(
+                user_id=current_user.id,
+                url=normalized_url,
+                name=scan_data.label or "Local Host",
+                description="Auto-created for LocalHostTesting",
+                asset_value="low"
+            )
+            db.add(target)
+            db.commit()
+            db.refresh(target)
+        except Exception as e:
+            # If creation fails (e.g., race condition), try to fetch again
+            db.rollback()
+            target = db.query(Target)\
+                .filter(Target.url == normalized_url)\
+                .first()
+            if not target:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Failed to create or find target: {str(e)}"
+                )
 
     # Create scan job
     job = ScanJob(
@@ -220,7 +235,7 @@ async def run_local_testing_scan(
     try:
         # Execute localhost testing scan (Semgrep - primary tool)
         scan_service = ScanService(db)
-        result = scan_service.execute_localhost_testing(job.id)
+        result = scan_service.execute_localhost_testing(job.id, source_path=scan_data.source_path)
         db.refresh(job)
         
         # Format alerts for response (combine from both tools)

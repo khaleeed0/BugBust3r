@@ -267,7 +267,7 @@ class ScanService:
             self.db.commit()
             raise
     
-    def execute_localhost_testing(self, job_id: int) -> Dict:
+    def execute_localhost_testing(self, job_id: int, source_path: str = None) -> Dict:
         """
         Execute localhost testing scan using Semgrep (primary tool)
         
@@ -316,7 +316,7 @@ class ScanService:
             logger.info(f"Starting Semgrep scan for job {job_id}, target: {target_url}")
             try:
                 stage_start = datetime.utcnow()
-                semgrep_result = self.tools['semgrep'].run(target_url=target_url)
+                semgrep_result = self.tools['semgrep'].run(target_url=target_url, source_path=source_path)
                 execution_time = int((datetime.utcnow() - stage_start).total_seconds())
                 
                 # Store tool execution

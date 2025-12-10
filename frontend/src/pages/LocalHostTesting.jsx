@@ -6,6 +6,7 @@ import { api } from '../services/api'
 export default function LocalHostTesting() {
   const navigate = useNavigate()
   const [targetUrl, setTargetUrl] = useState('http://localhost:3000')
+  const [sourcePath, setSourcePath] = useState('')
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState(null)
 
@@ -46,9 +47,13 @@ export default function LocalHostTesting() {
     setLoading(true)
     setResult(null)
     try {
+      // Use a longer timeout for Semgrep scans (5 minutes)
       const response = await api.post('/scans/local-testing', {
         target_url: targetUrl.trim(),
         label: 'LocalHostTesting',
+        source_path: sourcePath.trim() || null,
+      }, {
+        timeout: 300000 // 5 minutes for Semgrep scans
       })
       setResult(response.data)
       toast.success('Semgrep scan completed')
@@ -114,12 +119,34 @@ export default function LocalHostTesting() {
                 className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-transparent text-gray-900"
               />
             </div>
+            <div>
+              <label htmlFor="sourcePath" className="block text-sm font-medium text-gray-700 mb-2">
+                Source Code Path (Optional)
+                <span className="text-xs text-gray-500 ml-2">Absolute path to your project's source code directory</span>
+              </label>
+              <input
+                id="sourcePath"
+                type="text"
+                value={sourcePath}
+                onChange={(e) => setSourcePath(e.target.value)}
+                placeholder="C:\Users\username\project\src or /home/user/project/src"
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-transparent text-gray-900"
+              />
+              <p className="mt-2 text-xs text-gray-500">
+                💡 If left empty, Semgrep will scan test files. Provide the path to your actual source code to scan your project.
+              </p>
+            </div>
             <button
               type="submit"
               disabled={loading}
               className="w-full px-6 py-3 bg-gray-900 text-white font-medium rounded-lg hover:bg-gray-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {loading ? 'Running Semgrep Scan...' : 'Run Semgrep Scan'}
+              {loading ? (
+                <span className="flex items-center justify-center gap-2">
+                  <span className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></span>
+                  Scanning... This may take 1-3 minutes for large codebases
+                </span>
+              ) : 'Run Semgrep Scan'}
             </button>
           </form>
         </div>
