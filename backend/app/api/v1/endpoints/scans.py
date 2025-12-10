@@ -67,9 +67,9 @@ async def create_scan(
     db: Session = Depends(get_db)
 ):
     """Create a new scan job"""
-    # Verify target exists and belongs to user
+    # Verify target exists (allow using targets created by other users, since URL is unique globally)
     target = db.query(Target)\
-        .filter(Target.id == scan_data.target_id, Target.user_id == current_user.id)\
+        .filter(Target.id == scan_data.target_id)\
         .first()
     
     if not target:
