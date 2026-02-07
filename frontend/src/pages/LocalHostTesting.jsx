@@ -47,16 +47,16 @@ export default function LocalHostTesting() {
     setLoading(true)
     setResult(null)
     try {
-      // Use a longer timeout for Semgrep scans (5 minutes)
+      // Use a longer timeout for AddressSanitizer scans (5 minutes)
       const response = await api.post('/scans/local-testing', {
         target_url: targetUrl.trim(),
         label: 'LocalHostTesting',
         source_path: sourcePath.trim() || null,
       }, {
-        timeout: 300000 // 5 minutes for Semgrep scans
+        timeout: 300000 // 5 minutes for AddressSanitizer scans
       })
       setResult(response.data)
-      toast.success('Semgrep scan completed')
+      toast.success('AddressSanitizer scan completed')
     } catch (error) {
       console.error('Scan error:', error)
       const errorMessage = error.response?.data?.detail || error.message || 'Failed to run local scan'
@@ -89,8 +89,7 @@ export default function LocalHostTesting() {
           </button>
           <h1 className="text-4xl font-semibold text-gray-900 mb-4">LocalHostTesting</h1>
           <p className="text-lg text-gray-600">
-            Run development-stage scans against a localhost service using Semgrep - a static analysis tool for finding buffer overflow vulnerabilities and security issues. This flow is optimized for quick
-            feedback without running the full production toolchain.
+            Run development-stage scans against a localhost service using AddressSanitizer - a runtime memory safety tool for finding buffer overflow, use-after-free, and other memory corruption vulnerabilities in C/C++ code. This flow is optimized for quick feedback without running the full production toolchain.
           </p>
         </div>
 
@@ -98,7 +97,7 @@ export default function LocalHostTesting() {
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
             <h2 className="text-2xl font-semibold text-gray-900">Development Scan</h2>
             <span className="inline-flex items-center px-4 py-1.5 rounded-full text-sm font-medium bg-amber-100 text-amber-800">
-              Semgrep · Static Analysis
+              AddressSanitizer · Memory Safety
             </span>
           </div>
           <p className="text-sm text-gray-600 mb-6">
@@ -133,7 +132,7 @@ export default function LocalHostTesting() {
                 className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-transparent text-gray-900"
               />
               <p className="mt-2 text-xs text-gray-500">
-                💡 If left empty, Semgrep will scan test files. Provide the path to your actual source code to scan your project.
+                💡 If left empty, AddressSanitizer will run a demo vulnerable C program. Provide the absolute path to your C/C++ source directory to scan your project.
               </p>
             </div>
             <button
@@ -146,7 +145,7 @@ export default function LocalHostTesting() {
                   <span className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></span>
                   Scanning... This may take 1-3 minutes for large codebases
                 </span>
-              ) : 'Run Semgrep Scan'}
+              ) : 'Run AddressSanitizer Scan'}
             </button>
           </form>
         </div>
@@ -197,7 +196,7 @@ export default function LocalHostTesting() {
                       <div className="flex items-center gap-2">
                         <h4 className="text-lg font-semibold text-gray-900">{alert.name || 'Security Issue'}</h4>
                         <span className="px-2 py-0.5 bg-cyan-100 text-cyan-800 rounded text-xs font-medium">
-                          Semgrep
+                          {alert.tool || 'AddressSanitizer'}
                         </span>
                       </div>
                       <span className={`text-sm font-medium px-2 py-1 rounded ${
@@ -220,8 +219,8 @@ export default function LocalHostTesting() {
               </div>
             ) : (
               <div className="text-center py-10 border border-dashed border-gray-300 rounded-lg">
-                <p className="text-gray-600 font-medium">No security issues found by Semgrep 🎉</p>
-                <p className="text-sm text-gray-500 mt-2">The scan completed successfully with no buffer overflow or security issues detected.</p>
+                <p className="text-gray-600 font-medium">No memory safety issues found by AddressSanitizer 🎉</p>
+                <p className="text-sm text-gray-500 mt-2">The scan completed successfully with no buffer overflow, use-after-free, or other memory corruption issues detected.</p>
               </div>
             )}
             
@@ -230,7 +229,7 @@ export default function LocalHostTesting() {
                 <p className="text-sm font-semibold text-blue-800 mb-2">Scan Summary:</p>
                 <div className="flex flex-wrap gap-2">
                   <span className="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-xs font-medium">
-                    Semgrep · {result.alerts.length} issue{result.alerts.length !== 1 ? 's' : ''} found
+                    AddressSanitizer · {result.alerts.length} issue{result.alerts.length !== 1 ? 's' : ''} found
                   </span>
                 </div>
               </div>

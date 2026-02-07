@@ -11,8 +11,14 @@ from app.models.job import ScanJob, Finding, VulnerabilityDefinition, ToolExecut
 from app.models.target import Target
 from app.models.tool import Tool
 from app.docker.tools import (
-    Sublist3rTool, HttpxTool, GobusterTool, 
-    ZAPTool, NucleiTool, SQLMapTool, SemgrepTool
+    Sublist3rTool,
+    HttpxTool,
+    GobusterTool,
+    ZAPTool,
+    NucleiTool,
+    SQLMapTool,
+    SemgrepTool,
+    AddressSanitizerTool,
 )
 
 logger = logging.getLogger(__name__)
@@ -31,6 +37,7 @@ class ScanService:
             'nuclei': NucleiTool(),
             'sqlmap': SQLMapTool(),
             'semgrep': SemgrepTool(),
+            'addresssanitizer': AddressSanitizerTool(),
         }
     
     def _store_tool_execution(
@@ -269,11 +276,11 @@ class ScanService:
     
     def execute_localhost_testing(self, job_id: int, source_path: str = None) -> Dict:
         """
-        Execute localhost testing scan using Semgrep (primary tool)
-        
+        Execute localhost testing scan using AddressSanitizer (primary tool).
+
         This method is optimized for localhost/127.0.0.1 targets and focuses on:
-        - Semgrep - Static analysis for buffer overflow and security issues (PRIMARY TOOL)
-        
+        - AddressSanitizer - runtime detection of memory safety bugs in C/C++ code
+
         Note: SQLMap is available but not used by default. It can be enabled later if needed.
         """
         from urllib.parse import urlparse
@@ -297,6 +304,7 @@ class ScanService:
             if not is_localhost:
                 raise ValueError("Localhost testing only supports localhost or 127.0.0.1 targets")
             
+            # Initialize results for localhost testing
             all_results = {
                 "job_id": job.job_id,
                 "target_url": target_url,
@@ -306,74 +314,63 @@ class ScanService:
                 "findings": [],
                 "vulnerabilities": []
             }
-            
-            # Get tools from database
+
+            # Get tools from database (includes AddressSanitizer)
             tools_map = self._get_tools_map()
-            semgrep_tool = tools_map.get('semgrep')
-            sqlmap_tool = tools_map.get('sqlmap')
-            
-            # Stage 1: Semgrep - Primary tool for buffer overflow and security analysis
-            logger.info(f"Starting Semgrep scan for job {job_id}, target: {target_url}")
+            asan_tool = tools_map.get('addresssanitizer')
+
+            # Stage 1: AddressSanitizer - Primary tool for buffer overflow and memory safety analysis
+            logger.info(f"Starting AddressSanitizer run for job {job_id}, target: {target_url}")
             try:
                 stage_start = datetime.utcnow()
-                semgrep_result = self.tools['semgrep'].run(target_url=target_url, source_path=source_path)
+                asan_result = self.tools['addresssanitizer'].run(source_path=source_path)
                 execution_time = int((datetime.utcnow() - stage_start).total_seconds())
-                
+
                 # Store tool execution
-                if semgrep_tool:
+                if asan_tool:
                     self._store_tool_execution(
-                        job, semgrep_tool, 1, "Localhost Testing: Semgrep Static Analysis",
-                        {"target_url": target_url}, semgrep_result, execution_time
+                        job,
+                        asan_tool,
+                        1,
+                        "Localhost Testing: AddressSanitizer Memory Safety Analysis",
+                        {"target_url": target_url, "source_path": source_path},
+                        asan_result,
+                        execution_time,
                     )
-                
-                all_results["results"]["semgrep"] = semgrep_result
-                
-                # Convert Semgrep findings to alerts
-                severity_map = {
-                    'ERROR': FindingSeverity.CRITICAL,
-                    'WARNING': FindingSeverity.HIGH,
-                    'INFO': FindingSeverity.MEDIUM,
-                    'INFO': FindingSeverity.LOW
-                }
-                
-                for finding in semgrep_result.get("findings", []):
-                    severity_str = finding.get("severity", "INFO")
-                    severity = severity_map.get(severity_str.upper(), FindingSeverity.MEDIUM)
-                    
+
+                all_results["results"]["addresssanitizer"] = asan_result
+
+                # Convert ASan errors to alerts/findings
+                for err in asan_result.get("errors", []):
+                    raw_block = err.get("raw", "")
                     alert = {
-                        "name": finding.get("rule_id", "Security Issue"),
-                        "risk": severity_str,
-                        "description": finding.get("message", ""),
-                        "solution": "Review the code and fix the identified security issue",
-                        "evidence": f"Path: {finding.get('path', 'unknown')}, Line: {finding.get('line', 0)}",
+                        "name": "AddressSanitizer memory error",
+                        "risk": "High",
+                        "description": "AddressSanitizer detected a memory safety violation.",
+                        "solution": "Investigate the reported stack trace and fix the offending code.",
+                        "evidence": raw_block[:500] if raw_block else "",
                         "url": target_url,
-                        "tool": "semgrep",
-                        "category": finding.get("category", "security")
+                        "tool": "addresssanitizer",
+                        "category": "memory-safety",
                     }
                     all_results["alerts"].append(alert)
-                    all_results["findings"].append(finding)
-                    
-                    # Create database finding if tool exists
-                    if semgrep_tool:
-                        vuln_def = self._get_or_create_vulnerability(
-                            finding.get("rule_id", "Security Issue"),
-                            finding.get("message", ""),
-                            "Review and fix the identified security issue"
-                        )
-                        self._create_finding(
-                            job, target, semgrep_tool, vuln_def,
-                            severity,
-                            location=finding.get("path", target_url),
-                            evidence=finding.get("message", ""),
-                            confidence="high"
-                        )
-                
-                logger.info(f"Semgrep scan completed: {len(semgrep_result.get('findings', []))} findings")
+                    all_results["findings"].append(
+                        {
+                            "tool": "addresssanitizer",
+                            "message": "AddressSanitizer detected a memory safety violation.",
+                            "raw": raw_block,
+                        }
+                    )
+
+                logger.info(
+                    f"AddressSanitizer run completed: "
+                    f"{asan_result.get('error_count', 0)} memory errors detected"
+                )
             except Exception as e:
-                logger.error(f"Semgrep scan failed: {e}", exc_info=True)
-                all_results["results"]["semgrep"] = {
+                logger.error(f"AddressSanitizer run failed: {e}", exc_info=True)
+                all_results["results"]["addresssanitizer"] = {
                     "status": "failed",
-                    "error": str(e)
+                    "error": str(e),
                 }
             
             # SQLMap is optional - commented out for now, but can be enabled later if needed
@@ -451,7 +448,7 @@ class ScanService:
     def _get_tools_map(self) -> Dict[str, Tool]:
         """Get or create tool records in database"""
         tools_map = {}
-        for tool_name in ['sublist3r', 'httpx', 'gobuster', 'zap', 'nuclei', 'sqlmap', 'semgrep']:
+        for tool_name in ['sublist3r', 'httpx', 'gobuster', 'zap', 'nuclei', 'sqlmap', 'semgrep', 'addresssanitizer']:
             tool = self.db.query(Tool).filter(Tool.name == tool_name).first()
             if not tool:
                 # Create tool record
@@ -462,7 +459,8 @@ class ScanService:
                     'zap': 'security-tools:zap',
                     'nuclei': 'security-tools:nuclei',
                     'sqlmap': 'security-tools:sqlmap',
-                    'semgrep': 'security-tools:semgrep'
+                    'semgrep': 'security-tools:semgrep',
+                    'addresssanitizer': 'security-tools:addresssanitizer',
                 }
                 display_names = {
                     'sublist3r': 'Sublist3r',
@@ -471,7 +469,8 @@ class ScanService:
                     'zap': 'OWASP ZAP',
                     'nuclei': 'Nuclei',
                     'sqlmap': 'SQLMap',
-                    'semgrep': 'Semgrep'
+                    'semgrep': 'Semgrep',
+                    'addresssanitizer': 'AddressSanitizer',
                 }
                 tool = Tool(
                     name=tool_name,

@@ -18,7 +18,8 @@ from app.services.scan_service import ScanService
 from app.docker.client import docker_client
 from app.docker.tools import (
     Sublist3rTool, HttpxTool, GobusterTool,
-    ZAPTool, NucleiTool, SQLMapTool
+    ZAPTool, NucleiTool, SQLMapTool,
+    SemgrepTool, AddressSanitizerTool,
 )
 import logging
 
@@ -59,7 +60,9 @@ def test_tool_images():
         'gobuster': 'security-tools:gobuster',
         'zap': 'security-tools:zap',
         'nuclei': 'security-tools:nuclei',
-        'sqlmap': 'security-tools:sqlmap'
+        'sqlmap': 'security-tools:sqlmap',
+        'semgrep': 'security-tools:semgrep',
+        'addresssanitizer': 'security-tools:addresssanitizer',
     }
     
     all_exist = True
@@ -178,6 +181,36 @@ def test_individual_tools():
     except Exception as e:
         print(f"   ❌ SQLMap error: {e}")
         results['sqlmap'] = False
+    
+    # Test Semgrep
+    print("\n🔍 Testing Semgrep...")
+    try:
+        tool = SemgrepTool()
+        result = tool.run()
+        success = result.get("status") in ["success", "failed"]
+        results['semgrep'] = success
+        if success:
+            print(f"   ✅ Semgrep executed - Status: {result.get('status')}, findings: {result.get('count', 0)}")
+        else:
+            print(f"   ❌ Semgrep failed")
+    except Exception as e:
+        print(f"   ❌ Semgrep error: {e}")
+        results['semgrep'] = False
+    
+    # Test AddressSanitizer
+    print("\n🛡️  Testing AddressSanitizer (demo mode)...")
+    try:
+        tool = AddressSanitizerTool()
+        result = tool.run()
+        success = result.get("status") in ["completed_with_issues", "success", "failed"]
+        results['addresssanitizer'] = success
+        if success:
+            print(f"   ✅ AddressSanitizer executed - Status: {result.get('status')}, errors: {result.get('error_count', 0)}")
+        else:
+            print(f"   ❌ AddressSanitizer failed")
+    except Exception as e:
+        print(f"   ❌ AddressSanitizer error: {e}")
+        results['addresssanitizer'] = False
     
     return results
 

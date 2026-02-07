@@ -39,7 +39,7 @@ export const api = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
-  timeout: 300000, // 5 minute timeout for long-running requests (Semgrep scans can take time)
+  timeout: 300000, // 5 minute timeout for long-running requests (AddressSanitizer scans can take time)
 })
 
 // Request interceptor to add token

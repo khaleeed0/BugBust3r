@@ -167,7 +167,7 @@ async def run_local_testing_scan(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Run a development/localhost scan using Semgrep (localhost only)"""
+    """Run a development/localhost scan using AddressSanitizer (localhost only)"""
     target_url = scan_data.target_url.strip()
     if not target_url:
         raise HTTPException(
@@ -233,7 +233,7 @@ async def run_local_testing_scan(
     db.refresh(job)
 
     try:
-        # Execute localhost testing scan (Semgrep - primary tool)
+        # Execute localhost testing scan (AddressSanitizer - primary tool)
         scan_service = ScanService(db)
         result = scan_service.execute_localhost_testing(job.id, source_path=scan_data.source_path)
         db.refresh(job)

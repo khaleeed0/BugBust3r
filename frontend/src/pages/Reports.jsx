@@ -331,10 +331,10 @@ export default function Reports() {
                               <span className="text-gray-700">SQL Injections: <span className="font-semibold text-red-600">{report.findings_summary.sql_injections}</span></span>
                             </div>
                           )}
-                          {report.findings_summary.semgrep_findings > 0 && (
+                          {report.findings_summary.addresssanitizer_findings > 0 && (
                             <div className="flex items-center">
                               <span className="mr-2">🔍</span>
-                              <span className="text-gray-700">Semgrep Findings: <span className="font-semibold text-orange-600">{report.findings_summary.semgrep_findings}</span></span>
+                              <span className="text-gray-700">AddressSanitizer Findings: <span className="font-semibold text-orange-600">{report.findings_summary.addresssanitizer_findings}</span></span>
                             </div>
                           )}
                         </div>

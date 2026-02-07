@@ -155,7 +155,7 @@ export default function Dashboard() {
                 Phase 1: Static Code Analysis
               </h2>
               <p className="text-gray-700 mb-6">
-                Analyze source code for buffer overflow vulnerabilities, security issues, and code quality problems using Semgrep.
+                Analyze C/C++ source code for buffer overflow, use-after-free, and other memory corruption vulnerabilities using AddressSanitizer.
               </p>
               <button
                 onClick={handlePhase1Click}
@@ -164,7 +164,7 @@ export default function Dashboard() {
                 Start Static Analysis
               </button>
               <p className="text-xs text-gray-600 mt-4">
-                Uses: Semgrep • Localhost targets only
+                Uses: AddressSanitizer • Localhost targets only
               </p>
             </div>
           </div>

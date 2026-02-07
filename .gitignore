@@ -42,4 +42,7 @@ Thumbs.db
 # Docker
 *.log
 
+# Test binaries (AddressSanitizer output)
+test_vulnerable_code/app
+
 

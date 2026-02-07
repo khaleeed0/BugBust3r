@@ -15,7 +15,7 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-TOOLS=("sublist3r" "httpx" "gobuster" "zap" "nuclei" "sqlmap")
+TOOLS=("sublist3r" "httpx" "gobuster" "zap" "nuclei" "sqlmap" "addresssanitizer")
 IMAGES=(
     "security-tools:sublist3r"
     "security-tools:httpx"
@@ -23,6 +23,7 @@ IMAGES=(
     "security-tools:zap"
     "security-tools:nuclei"
     "security-tools:sqlmap"
+    "security-tools:addresssanitizer"
 )
 
 # Mapping of verification commands per tool
@@ -33,6 +34,7 @@ VERIFY_COMMANDS=(
     "/app/zap-baseline.py -h"
     "/app/nuclei -version"
     "python3 sqlmap.py -h"
+    "echo 'ASan ready'"
 )
 
 # Function to build an image

@@ -660,3 +660,86 @@ class SemgrepTool(SecurityTool):
             }
 
 
+class AddressSanitizerTool(SecurityTool):
+    """AddressSanitizer (ASan) - Memory safety testing for C/C++"""
+    
+    def __init__(self):
+        super().__init__("security-tools:addresssanitizer", "addresssanitizer")
+    
+    def run(self, source_path: str = None, **kwargs) -> Dict:
+        """
+        Run AddressSanitizer on C/C++ code.
+
+        Behaviour:
+        - If source_path is provided, mount it at /source and try to compile all *.c / *.cc / *.cpp
+          files in that directory with -fsanitize=address,undefined, then run the binary.
+        - If no source_path is provided, a small intentionally vulnerable C program is created
+          inside the container, compiled with ASan, and executed to demonstrate detection.
+        """
+        import os
+
+        volumes: Dict[str, Dict[str, str]] = {}
+
+        if source_path and source_path.strip():
+            # Mount provided host directory into /source (read-only)
+            host_path = os.path.abspath(source_path)
+            volumes[host_path] = {"bind": "/source", "mode": "ro"}
+            use_demo = "false"
+        else:
+            # No external source; create a demo vulnerable program under /source
+            use_demo = "true"
+
+        # Use the run script in the image - run via sh so env var is passed
+        command = ["sh", "-c", f"USE_DEMO={use_demo} /app/run_asan.sh"]
+
+        try:
+            stdout, stderr, exit_code = docker_client.run_container(
+                image=self.image,
+                command=command,
+                volumes=volumes,
+                remove=True,
+            )
+
+            full_output = (stdout or "") + ("\n" + stderr if stderr else "")
+            asan_errors: List[Dict[str, str]] = []
+
+            if "ERROR: AddressSanitizer" in full_output:
+                status = "completed_with_issues"
+                current_block: List[str] = []
+                capturing = False
+                for line in full_output.splitlines():
+                    if "ERROR: AddressSanitizer" in line:
+                        if current_block:
+                            asan_errors.append({"raw": "\n".join(current_block)})
+                            current_block = []
+                        capturing = True
+                    if capturing:
+                        current_block.append(line)
+                        if line.strip() == "":
+                            capturing = False
+                if current_block:
+                    asan_errors.append({"raw": "\n".join(current_block)})
+            else:
+                status = "success" if exit_code == 0 else "failed"
+
+            return {
+                "tool": self.tool_name,
+                "status": status,
+                "exit_code": exit_code,
+                "errors": asan_errors,
+                "error_count": len(asan_errors),
+                "raw_output": full_output[:5000],
+                "error": stderr if exit_code != 0 and stderr else None,
+            }
+        except Exception as e:
+            logger.error(f"AddressSanitizer error: {e}", exc_info=True)
+            return {
+                "tool": self.tool_name,
+                "status": "failed",
+                "exit_code": -1,
+                "errors": [],
+                "error_count": 0,
+                "raw_output": "",
+                "error": str(e),
+            }
+

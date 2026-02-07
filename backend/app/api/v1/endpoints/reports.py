@@ -81,7 +81,7 @@ async def get_reports(
         security_alerts = len([f for f in findings if f.tool and f.tool.name == 'zap'])
         vulnerabilities = len([f for f in findings if f.tool and f.tool.name == 'nuclei'])
         sql_injections = len([f for f in findings if f.tool and f.tool.name == 'sqlmap'])
-        semgrep_findings = len([f for f in findings if f.tool and f.tool.name == 'semgrep'])
+        addresssanitizer_findings = len([f for f in findings if f.tool and f.tool.name == 'addresssanitizer'])
         
         findings_summary = {
             "total": len(findings),
@@ -99,7 +99,7 @@ async def get_reports(
             "security_alerts": security_alerts,
             "vulnerabilities": vulnerabilities,
             "sql_injections": sql_injections,
-            "semgrep_findings": semgrep_findings
+            "addresssanitizer_findings": addresssanitizer_findings
         }
         
         # Count completed stages and total stages
