@@ -55,6 +55,7 @@ class LocalScanResponse(BaseModel):
     environment: str
     alert_count: int
     alerts: List[Dict[str, Any]]
+    results: Optional[Dict[str, Any]] = None  # Tool outputs (addresssanitizer, ghauri)
     created_at: datetime
     completed_at: Optional[datetime] = None
     error: Optional[str] = None  # Include error message if scan failed
@@ -258,9 +259,10 @@ async def run_local_testing_scan(
             environment="development",
             alert_count=result.get("alert_count", len(formatted_alerts)),
             alerts=formatted_alerts,
+            results=result.get("results"),
             created_at=job.created_at,
             completed_at=job.completed_at,
-            error=result.get("error")  # Include error if present
+            error=result.get("error")
         )
     except Exception as e:
         logger.error(f"Local testing scan failed: {e}", exc_info=True)

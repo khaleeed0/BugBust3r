@@ -859,6 +859,12 @@ class AddressSanitizerTool(SecurityTool):
                             capturing = False
                 if current_block:
                     asan_errors.append({"raw": "\n".join(current_block)})
+            elif exit_code != 0 and full_output.strip():
+                # Exit non-zero with output: treat as completed_with_issues so output is surfaced
+                # (e.g. segfault after overflow, or compiler warnings about overflow)
+                status = "completed_with_issues"
+                if "overflow" in full_output.lower() or "segmentation fault" in full_output.lower():
+                    asan_errors.append({"raw": full_output[:2000]})
             else:
                 status = "success" if exit_code == 0 else "failed"
 

@@ -94,21 +94,26 @@ class DockerClient:
             
         except docker.errors.ContainerError as e:
             logger.error(f"Container error: {e}, exit_status: {e.exit_status}")
-            # Try to get container logs
-            try:
-                if hasattr(e, 'container') and e.container:
-                    logs = e.container.logs(stdout=True, stderr=True).decode('utf-8', errors='ignore')
-                    # Split logs into stdout and stderr (Docker combines them)
-                    stdout = logs
-                    stderr = str(e)
-                else:
-                    stdout = str(e)
-                    stderr = str(e)
-            except Exception as log_error:
-                logger.warning(f"Could not retrieve container logs: {log_error}")
+            # Prefer e.stderr - ContainerError includes actual container stderr
+            stdout = ""
+            stderr = ""
+            if hasattr(e, 'stderr') and e.stderr is not None:
+                err_bytes = e.stderr if isinstance(e.stderr, bytes) else e.stderr.encode()
+                stderr = err_bytes.decode('utf-8', errors='ignore')
+                stdout = stderr  # Docker often combines streams; use as primary output
+            # Fallback: try container logs (container may be removed if remove=True)
+            if not stdout and not stderr:
+                try:
+                    if hasattr(e, 'container') and e.container:
+                        logs = e.container.logs(stdout=True, stderr=True).decode('utf-8', errors='ignore')
+                        stdout = logs
+                        stderr = logs
+                except Exception as log_error:
+                    logger.warning(f"Could not retrieve container logs: {log_error}")
+            if not stdout and not stderr:
                 stdout = str(e)
                 stderr = str(e)
-            return stdout, stderr, e.exit_status if hasattr(e, 'exit_status') else 1
+            return stdout, stderr, getattr(e, 'exit_status', 1)
         
         except docker.errors.ImageNotFound:
             logger.error(f"Image not found: {image}")

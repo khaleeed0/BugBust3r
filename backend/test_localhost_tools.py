@@ -41,14 +41,18 @@ def test_addresssanitizer():
 
 
 def test_ghauri():
-    """Run Ghauri against a URL and assert it returns output."""
+    """Run Ghauri against a URL and assert it returns output.
+    Use a URL that matches SQL injection testing pattern (query param or path).
+    Reference: GET /api/products/<string> e.g. /api/products/men for path-based SQLi.
+    """
     from app.docker.tools import GhauriTool
 
     print("=" * 60)
-    print("TEST 2: Ghauri (localhost URL)")
+    print("TEST 2: Ghauri (localhost URL - SQL injection)")
     print("=" * 60)
     tool = GhauriTool()
-    url = "http://localhost:8000/"
+    # URL with query param for SQLi testing; matches reference pattern
+    url = "http://localhost:8000/api/products/men"  # or http://localhost:8000/item?id=1
     result = tool.run(target_url=url, is_localhost=True)
 
     assert "status" in result, "Ghauri must return 'status'"
@@ -69,6 +73,34 @@ def test_ghauri():
     return True
 
 
+def test_addresssanitizer_with_source():
+    """Run AddressSanitizer on test_vulnerable_code/cpp_stack (buffer overflow)."""
+    from app.docker.tools import AddressSanitizerTool
+
+    # Resolve path to test_vulnerable_code/cpp_stack
+    backend_dir = os.path.dirname(os.path.abspath(__file__))
+    repo_root = os.path.dirname(backend_dir)
+    cpp_stack = os.path.join(repo_root, "test_vulnerable_code", "cpp_stack")
+    if not os.path.isdir(cpp_stack):
+        print("TEST 3: AddressSanitizer (source path) - SKIP (test_vulnerable_code/cpp_stack not found)\n")
+        return True
+
+    print("=" * 60)
+    print("TEST 3: AddressSanitizer (source path: cpp_stack)")
+    print("=" * 60)
+    tool = AddressSanitizerTool()
+    result = tool.run(source_path=cpp_stack)
+
+    raw = result.get("raw_output") or ""
+    assert len(raw) > 0, "AddressSanitizer must produce non-empty output"
+    assert result.get("tool") == "addresssanitizer"
+    if result.get("status") == "completed_with_issues" and result.get("error_count", 0) > 0:
+        print("  (detected stack-buffer-overflow in overflow.cpp)")
+    print(f"  status: {result['status']}, error_count: {result.get('error_count', 0)}, output: {len(raw)} chars")
+    print("  OK: AddressSanitizer with source path produced output.\n")
+    return True
+
+
 def main():
     errors = []
     try:
@@ -83,6 +115,12 @@ def main():
         errors.append(f"Ghauri: {e}")
         print(f"  FAIL: {e}\n")
 
+    try:
+        test_addresssanitizer_with_source()
+    except Exception as e:
+        errors.append(f"AddressSanitizer (source): {e}")
+        print(f"  FAIL: {e}\n")
+
     if errors:
         print("=" * 60)
         print("SUMMARY: FAILED")
@@ -90,7 +128,7 @@ def main():
             print(f"  - {e}")
         return 1
     print("=" * 60)
-    print("SUMMARY: Both AddressSanitizer and Ghauri work and produce output.")
+    print("SUMMARY: AddressSanitizer and Ghauri work and produce output.")
     print("=" * 60)
     return 0
 

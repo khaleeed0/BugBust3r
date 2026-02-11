@@ -8,7 +8,7 @@ void stack_overflow(char* input) {
 }
 
 int main() {
-    char data[] = "AAAAAAAAAAAAAAAAAAAAAAAA";  // 25 chars - overflows buffer[8]
+    char data[] = "123456789012";  // 12 chars - overflows buffer[8], ASan detects reliably
     stack_overflow(data);  // Triggers stack-buffer-overflow
     return 0;
 }
