@@ -19,6 +19,7 @@ from app.docker.tools import (
     SQLMapTool,
     SemgrepTool,
     AddressSanitizerTool,
+    GhauriTool,
 )
 
 logger = logging.getLogger(__name__)
@@ -38,6 +39,7 @@ class ScanService:
             'sqlmap': SQLMapTool(),
             'semgrep': SemgrepTool(),
             'addresssanitizer': AddressSanitizerTool(),
+            'ghauri': GhauriTool(),
         }
     
     def _store_tool_execution(
@@ -315,9 +317,10 @@ class ScanService:
                 "vulnerabilities": []
             }
 
-            # Get tools from database (includes AddressSanitizer)
+            # Get tools from database (includes AddressSanitizer and Ghauri)
             tools_map = self._get_tools_map()
             asan_tool = tools_map.get('addresssanitizer')
+            ghauri_tool = tools_map.get('ghauri')
 
             # Stage 1: AddressSanitizer - Primary tool for buffer overflow and memory safety analysis
             logger.info(f"Starting AddressSanitizer run for job {job_id}, target: {target_url}")
@@ -372,7 +375,58 @@ class ScanService:
                     "status": "failed",
                     "error": str(e),
                 }
-            
+
+            # Stage 2: Ghauri - SQL injection detection/exploitation (blind SQLi, PostgreSQL-friendly)
+            logger.info(f"Starting Ghauri run for job {job_id}, target: {target_url}")
+            try:
+                stage_start = datetime.utcnow()
+                ghauri_result = self.tools['ghauri'].run(target_url=target_url, is_localhost=True)
+                execution_time = int((datetime.utcnow() - stage_start).total_seconds())
+
+                if ghauri_tool:
+                    self._store_tool_execution(
+                        job,
+                        ghauri_tool,
+                        2,
+                        "Localhost Testing: Ghauri SQL Injection Testing",
+                        {"target_url": target_url},
+                        ghauri_result,
+                        execution_time,
+                    )
+
+                all_results["results"]["ghauri"] = ghauri_result
+
+                if ghauri_result.get("vulnerable"):
+                    alert = {
+                        "name": "SQL Injection (Ghauri)",
+                        "risk": "CRITICAL",
+                        "description": "Ghauri detected a possible SQL injection. Use parameterized queries and sanitize inputs.",
+                        "solution": "Use parameterized queries/prepared statements and sanitize all user inputs.",
+                        "evidence": (ghauri_result.get("raw_output") or "")[:500],
+                        "url": target_url,
+                        "tool": "ghauri",
+                        "category": "sql-injection",
+                    }
+                    all_results["alerts"].append(alert)
+                    all_results["findings"].append({
+                        "tool": "ghauri",
+                        "message": "SQL injection detected or database enumerated by Ghauri.",
+                        "raw": ghauri_result.get("raw_output", ""),
+                    })
+                    if ghauri_result.get("databases"):
+                        all_results["findings"].append({
+                            "tool": "ghauri",
+                            "message": f"Databases enumerated: {', '.join(ghauri_result['databases'])}",
+                            "raw": "",
+                        })
+                logger.info(f"Ghauri run completed: vulnerable={ghauri_result.get('vulnerable', False)}")
+            except Exception as e:
+                logger.error(f"Ghauri run failed: {e}", exc_info=True)
+                all_results["results"]["ghauri"] = {
+                    "status": "failed",
+                    "error": str(e),
+                }
+
             # SQLMap is optional - commented out for now, but can be enabled later if needed
             # Uncomment below to enable SQLMap scanning
             # Stage 2: SQLMap - SQL injection testing (OPTIONAL)
@@ -448,7 +502,7 @@ class ScanService:
     def _get_tools_map(self) -> Dict[str, Tool]:
         """Get or create tool records in database"""
         tools_map = {}
-        for tool_name in ['sublist3r', 'httpx', 'gobuster', 'zap', 'nuclei', 'sqlmap', 'semgrep', 'addresssanitizer']:
+        for tool_name in ['sublist3r', 'httpx', 'gobuster', 'zap', 'nuclei', 'sqlmap', 'semgrep', 'addresssanitizer', 'ghauri']:
             tool = self.db.query(Tool).filter(Tool.name == tool_name).first()
             if not tool:
                 # Create tool record
@@ -461,6 +515,7 @@ class ScanService:
                     'sqlmap': 'security-tools:sqlmap',
                     'semgrep': 'security-tools:semgrep',
                     'addresssanitizer': 'security-tools:addresssanitizer',
+                    'ghauri': 'security-tools:ghauri',
                 }
                 display_names = {
                     'sublist3r': 'Sublist3r',
@@ -471,6 +526,7 @@ class ScanService:
                     'sqlmap': 'SQLMap',
                     'semgrep': 'Semgrep',
                     'addresssanitizer': 'AddressSanitizer',
+                    'ghauri': 'Ghauri',
                 }
                 tool = Tool(
                     name=tool_name,

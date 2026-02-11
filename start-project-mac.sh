@@ -177,7 +177,7 @@ fi
 echo
 
 echo "${BLUE} [5/7] Checking security tool Docker images...${RESET}"
-NEEDED_IMAGES=("security-tools:sublist3r" "security-tools:httpx" "security-tools:gobuster" "security-tools:zap" "security-tools:nuclei" "security-tools:sqlmap")
+NEEDED_IMAGES=("security-tools:sublist3r" "security-tools:httpx" "security-tools:gobuster" "security-tools:zap" "security-tools:nuclei" "security-tools:sqlmap" "security-tools:addresssanitizer" "security-tools:ghauri")
 MISSING_IMAGES=()
 
 for img in "${NEEDED_IMAGES[@]}"; do

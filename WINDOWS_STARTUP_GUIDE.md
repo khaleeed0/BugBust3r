@@ -53,6 +53,8 @@ After startup, the following services will be running:
 | Database | localhost:5433 | PostgreSQL database |
 | Redis | localhost:6379 | Redis cache |
 | OWASP ZAP | Docker image | Security scanning tool |
+| AddressSanitizer | Docker image | C/C++ memory safety (LocalHost Testing) |
+| Ghauri | Docker image | SQL injection (LocalHost Testing) |
 
 ## Usage
 

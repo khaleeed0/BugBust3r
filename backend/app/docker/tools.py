@@ -4,10 +4,53 @@ Security tools wrapper using Docker
 import json
 import logging
 import docker
+import os
+import platform
 from typing import Dict, List, Optional
 from app.docker.client import docker_client
 
 logger = logging.getLogger(__name__)
+
+
+def normalize_path_for_docker(path: str) -> str:
+    """
+    Normalize a Windows path for Docker volume mounting.
+    
+    On Windows, Docker Desktop expects paths with forward slashes.
+    This function converts Windows paths (e.g., D:\path\to\dir) to
+    Docker-compatible format (e.g., D:/path/to/dir).
+    
+    Important: This function preserves host paths as-is and only normalizes
+    the path separators. It does NOT resolve paths relative to the container
+    filesystem, since Docker needs host paths for volume mounting.
+    
+    Args:
+        path: The path to normalize (should be a host path, preferably absolute)
+        
+    Returns:
+        Normalized path suitable for Docker volume mounting
+    """
+    if not path:
+        return path
+    
+    # Detect Windows paths by checking for drive letter (e.g., "D:\" or "D:/")
+    # Note: We check the original path format, not platform.system(), because
+    # the backend may run in a Linux container but receive Windows host paths
+    is_windows_path = (
+        len(path) >= 2 and 
+        path[0].isalpha() and 
+        path[1] in (':\\', ':/', ':')
+    )
+    
+    if is_windows_path:
+        # Convert backslashes to forward slashes for Docker compatibility
+        normalized = path.replace('\\', '/')
+        # Ensure format is D:/path (not D:\path)
+        return normalized
+    else:
+        # Linux/Mac path or relative path - return as-is
+        # Docker can handle these directly
+        return path
 
 
 class SecurityTool:
@@ -527,13 +570,11 @@ class SemgrepTool(SecurityTool):
         # Note: We don't check os.path.exists() here because we're in a Linux container
         # and the path is on the Windows host. Docker will handle mounting it.
         if source_path and source_path.strip():
-            # Normalize Windows path separators for Docker
-            # Docker on Windows can handle both \ and /, but let's normalize
-            normalized_path = source_path.replace('\\', '/')
-            # Remove trailing slash if present
-            normalized_path = normalized_path.rstrip('/')
+            # Normalize Windows path for Docker compatibility
+            normalized_path = normalize_path_for_docker(source_path)
             
-            volumes[source_path] = {"bind": "/source", "mode": "ro"}
+            volumes[normalized_path] = {"bind": "/source", "mode": "ro"}
+            logger.info(f"Mounting source path: {source_path} -> {normalized_path} (Docker format)")
             # Use 'auto' config which automatically detects language and uses appropriate security rules
             # This works better for C#, Python, JavaScript, etc. than just p/security-audit
             # Add --max-memory and --timeout to prevent hanging on large codebases
@@ -660,6 +701,105 @@ class SemgrepTool(SecurityTool):
             }
 
 
+class GhauriTool(SecurityTool):
+    """Ghauri - SQL injection detection and exploitation (blind SQLi, PostgreSQL-friendly)"""
+
+    def __init__(self):
+        super().__init__("security-tools:ghauri", "ghauri")
+
+    def run(self, target_url: str, is_localhost: bool = False, **kwargs) -> Dict:
+        """
+        Run Ghauri on target URL. For localhost, replaces host with host.docker.internal
+        so the container can reach the host machine.
+        """
+        from urllib.parse import urlparse
+
+        scan_url = target_url
+        if is_localhost:
+            parsed = urlparse(target_url)
+            hostname = parsed.hostname
+            if hostname in ("localhost", "127.0.0.1"):
+                scan_url = target_url.replace(
+                    f"{parsed.scheme}://{hostname}",
+                    f"{parsed.scheme}://host.docker.internal",
+                )
+
+        # Non-interactive: --batch; enumerate DBs to detect and confirm SQLi
+        command = ["-u", scan_url, "--batch", "--dbs", "--level=1"]
+        if not docker_client.image_exists(self.image):
+            error_msg = (
+                f"Ghauri Docker image '{self.image}' not found. "
+                f"Build it: cd docker-tools/ghauri && docker build -t {self.image} ."
+            )
+            logger.error(error_msg)
+            return {
+                "tool": self.tool_name,
+                "target": target_url,
+                "status": "failed",
+                "vulnerable": False,
+                "raw_output": "",
+                "error": error_msg,
+            }
+
+        try:
+            logger.info(f"Running Ghauri on {scan_url} (original: {target_url}, is_localhost: {is_localhost})")
+            stdout, stderr, exit_code = docker_client.run_container(
+                image=self.image,
+                command=command,
+                volumes={},
+                remove=True,
+            )
+            full_output = (stdout or "") + ("\n" + (stderr or ""))
+
+            # Heuristics: real findings only (avoid banner text "SQL injection")
+            out_lower = full_output.lower()
+            vulnerable = (
+                "is injectable" in out_lower
+                or "parameter" in out_lower and "injectable" in out_lower
+                or "current database:" in out_lower
+                or "available databases:" in out_lower
+                or "backend dbms:" in out_lower
+            )
+            databases = []
+            for line in full_output.splitlines():
+                line = line.strip()
+                if line.startswith("current database:") or line.startswith("available database:"):
+                    db_part = line.split(":", 1)[-1].strip()
+                    if db_part and db_part not in databases:
+                        databases.append(db_part)
+                if "[" in line and "]" in line and "database" in line.lower():
+                    # e.g. "[*] database: xyz"
+                    try:
+                        idx = line.index("]")
+                        db_part = line[idx + 1 :].strip().split()[-1]
+                        if db_part and db_part not in databases:
+                            databases.append(db_part)
+                    except (ValueError, IndexError):
+                        pass
+
+            status = "completed_with_issues" if vulnerable else ("success" if exit_code == 0 else "failed")
+            return {
+                "tool": self.tool_name,
+                "target": target_url,
+                "status": status,
+                "exit_code": exit_code,
+                "vulnerable": vulnerable,
+                "databases": databases,
+                "raw_output": full_output[:8000],
+                "error": stderr if exit_code != 0 and stderr else None,
+            }
+        except Exception as e:
+            logger.error(f"Ghauri error: {e}", exc_info=True)
+            return {
+                "tool": self.tool_name,
+                "target": target_url,
+                "status": "failed",
+                "vulnerable": False,
+                "raw_output": "",
+                "error": str(e),
+            }
+
+
 class AddressSanitizerTool(SecurityTool):
     """AddressSanitizer (ASan) - Memory safety testing for C/C++"""
     
@@ -676,14 +816,14 @@ class AddressSanitizerTool(SecurityTool):
         - If no source_path is provided, a small intentionally vulnerable C program is created
           inside the container, compiled with ASan, and executed to demonstrate detection.
         """
-        import os
-
         volumes: Dict[str, Dict[str, str]] = {}
 
         if source_path and source_path.strip():
             # Mount provided host directory into /source (read-only)
-            host_path = os.path.abspath(source_path)
+            # Normalize Windows path for Docker compatibility
+            host_path = normalize_path_for_docker(source_path)
             volumes[host_path] = {"bind": "/source", "mode": "ro"}
+            logger.info(f"Mounting source path: {source_path} -> {host_path} (Docker format)")
             use_demo = "false"
         else:
             # No external source; create a demo vulnerable program under /source

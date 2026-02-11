@@ -19,6 +19,8 @@ This will create the following images:
 - `security-tools:zap`
 - `security-tools:nuclei`
 - `security-tools:sqlmap`
+- `security-tools:addresssanitizer` (C/C++ memory safety; used in LocalHost Testing)
+- `security-tools:ghauri` (SQL injection; used in LocalHost Testing)
 
 ### 2. Configure Environment
 

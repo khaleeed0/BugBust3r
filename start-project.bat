@@ -207,6 +207,16 @@ if errorlevel 1 (
     echo SQLMap image missing - will need to build
     set MISSING_IMAGES=1
 )
+docker images --format "{{.Repository}}:{{.Tag}}" | findstr /C:"security-tools:addresssanitizer" >nul
+if errorlevel 1 (
+    echo AddressSanitizer image missing - will need to build
+    set MISSING_IMAGES=1
+)
+docker images --format "{{.Repository}}:{{.Tag}}" | findstr /C:"security-tools:ghauri" >nul
+if errorlevel 1 (
+    echo Ghauri image missing - will need to build
+    set MISSING_IMAGES=1
+)
 
 if !MISSING_IMAGES!==1 (
     echo %YELLOW%Some security tool images are missing. Building all...%RESET%
@@ -228,6 +238,10 @@ if !MISSING_IMAGES!==1 (
         docker build -t security-tools:nuclei .
         cd ..\sqlmap
         docker build -t security-tools:sqlmap .
+        cd ..\addresssanitizer
+        docker build -t security-tools:addresssanitizer .
+        cd ..\ghauri
+        docker build -t security-tools:ghauri .
         cd ..\..
     )
     cd ..\..

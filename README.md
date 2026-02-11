@@ -4,14 +4,18 @@ A comprehensive security scanning platform that orchestrates multiple security t
 
 ## Features
 
-- **Multi-Stage Security Scanning**: Orchestrates 6 security tools in sequence
+- **Multi-Stage Security Scanning**: Orchestrates multiple security tools in sequence
+- **LocalHost Testing**: AddressSanitizer (C/C++ memory safety) + Ghauri (SQL injection) for localhost targets
 - **On-Demand Container Execution**: Uses Docker SDK to run containers when needed
 - **User Authentication**: JWT-based authentication system
 - **Async Job Processing**: Redis + Celery for background job processing
 - **Real-time Status Tracking**: Track scan progress and results
 - **Comprehensive Reports**: Detailed reports for each scan job
 
-## Security Tools Workflow
+## Security Tools
+
+**Full scan pipeline:** Sublist3r → Httpx → Gobuster → OWASP ZAP → Nuclei → SQLMap  
+**LocalHost Testing (localhost/127.0.0.1 only):** AddressSanitizer → Ghauri
 
 1. **Stage 1 - Subdomain Enumeration**: Sublist3r
 2. **Stage 2 - HTTP Service Detection**: Httpx
@@ -19,6 +23,8 @@ A comprehensive security scanning platform that orchestrates multiple security t
 4. **Stage 4 - Web Application Scanning**: OWASP ZAP
 5. **Stage 5 - Template-Based Scanning**: Nuclei
 6. **Stage 6 - SQL Injection Testing**: SQLMap
+7. **AddressSanitizer**: C/C++ memory safety (buffer overflow, use-after-free) – used in LocalHost Testing
+8. **Ghauri**: SQL injection detection/exploitation (blind SQLi, PostgreSQL-friendly) – used in LocalHost Testing
 
 ## Technology Stack
 
@@ -27,7 +33,7 @@ A comprehensive security scanning platform that orchestrates multiple security t
 - **Database**: PostgreSQL
 - **Message Broker**: Redis
 - **Containerization**: Docker, Docker Compose
-- **Security Tools**: Sublist3r, Httpx, Gobuster, OWASP ZAP, Nuclei, SQLMap
+- **Security Tools**: Sublist3r, Httpx, Gobuster, OWASP ZAP, Nuclei, SQLMap, AddressSanitizer, Ghauri
 
 ## Project Structure
 
@@ -57,7 +63,9 @@ A comprehensive security scanning platform that orchestrates multiple security t
 │   ├── gobuster/
 │   ├── zap/
 │   ├── nuclei/
-│   └── sqlmap/
+│   ├── sqlmap/
+│   ├── addresssanitizer/
+│   └── ghauri/
 └── docker-compose.yml   # Orchestration file
 ```
 
@@ -88,6 +96,8 @@ cd docker-tools/gobuster && docker build -t security-tools:gobuster .
 cd docker-tools/zap && docker build -t security-tools:zap .
 cd docker-tools/nuclei && docker build -t security-tools:nuclei .
 cd docker-tools/sqlmap && docker build -t security-tools:sqlmap .
+cd docker-tools/addresssanitizer && docker build -t security-tools:addresssanitizer .
+cd docker-tools/ghauri && docker build -t security-tools:ghauri .
 ```
 
 ### 2. Environment Configuration
@@ -175,8 +185,9 @@ npm run dev
 
 1. **Register/Login**: Create an account or login
 2. **Start Scan**: Go to Dashboard and enter a target URL
-3. **Monitor Progress**: Check the Scans page for status
-4. **View Reports**: Once completed, view detailed reports
+3. **LocalHost Testing**: Use the LocalHost Testing page for localhost/127.0.0.1 targets – runs AddressSanitizer (optional C/C++ source path) and Ghauri (SQL injection)
+4. **Monitor Progress**: Check the Scans page for status
+5. **View Reports**: Once completed, view detailed reports
 
 ## Notes
 

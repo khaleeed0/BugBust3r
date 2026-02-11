@@ -1,6 +1,29 @@
 # BugBuster Changelog
 
-## Latest Update - Semgrep Integration & Bug Fixes (December 2024)
+## Latest Update - Ghauri & LocalHost Testing (February 2025)
+
+### Setup & Docker
+
+- **Ghauri tool**: Added SQL injection tool (blind SQLi, PostgreSQL-friendly) for LocalHost Testing.
+  - `docker-tools/ghauri/Dockerfile` – build with `docker build -t security-tools:ghauri .`
+  - Backend: `GhauriTool` in `backend/app/docker/tools.py`; runs after AddressSanitizer in localhost testing.
+- **LocalHost Testing**: Runs AddressSanitizer (C/C++ memory safety) then Ghauri (SQLi) for localhost/127.0.0.1 URLs.
+- **build-all.sh**: Includes `addresssanitizer` and `ghauri` in build and verify steps.
+- **start-project.bat**: Checks and builds `security-tools:addresssanitizer` and `security-tools:ghauri` when missing.
+- **start-project-mac.sh**: `NEEDED_IMAGES` updated to include AddressSanitizer and Ghauri.
+- **SETUP.md**: Lists AddressSanitizer and Ghauri in security tool images.
+- **README.md**: Features, tools workflow, project structure, and build instructions updated for AddressSanitizer and Ghauri; LocalHost Testing usage noted.
+- **docker-tools/RUN_INSTRUCTIONS.md**: Added run examples for AddressSanitizer and Ghauri.
+- **WINDOWS_STARTUP_GUIDE.md**: Services table updated with AddressSanitizer and Ghauri.
+
+### Tests
+
+- **backend/test_localhost_tools.py**: Verifies AddressSanitizer and Ghauri run and produce output.
+- **backend/test_ghauri_tool.py**: Standalone Ghauri tool test.
+
+---
+
+## Semgrep Integration & Bug Fixes (December 2024)
 
 ### 🎯 Major Features Added
 

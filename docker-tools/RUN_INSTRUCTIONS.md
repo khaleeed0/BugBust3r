@@ -87,6 +87,37 @@ docker run --rm security-tools:sqlmap python3 sqlmap.py \
 
 ---
 
+## AddressSanitizer (C/C++ Memory Safety)
+
+Runs a demo vulnerable program by default (detects stack-buffer-overflow). Optional: mount your C/C++ source directory.
+
+```bash
+# Demo mode (creates and runs a small vulnerable C program)
+docker run --rm security-tools:addresssanitizer sh -c "USE_DEMO=true /app/run_asan.sh"
+
+# Scan your source (replace /path/to/source with host path; use absolute path)
+docker run --rm -v /path/to/source:/source:ro security-tools:addresssanitizer sh -c "USE_DEMO=false /app/run_asan.sh"
+```
+
+---
+
+## Ghauri (SQL Injection – Blind SQLi, PostgreSQL-friendly)
+
+Uses `host.docker.internal` to reach a target on the host (macOS/Windows). For Linux use `--network host` and `127.0.0.1`.
+
+```bash
+# Help
+docker run --rm security-tools:ghauri -h
+
+# Test localhost target (macOS/Windows)
+docker run --rm security-tools:ghauri -u "http://host.docker.internal:8000/item?id=1" --batch --dbs --level=1
+
+# Enumerate databases
+docker run --rm security-tools:ghauri -u "http://host.docker.internal:8000/page?id=1" --batch --current-db
+```
+
+---
+
 ## Notes
 
 - All images are tagged as `security-tools:<toolname>` after running `build-all.sh`.
