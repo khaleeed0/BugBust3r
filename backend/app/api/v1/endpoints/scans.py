@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 from datetime import datetime
-from uuid import UUID
+from uuid import UUID, uuid4
 from urllib.parse import urlparse
 
 from app.db.database import get_db
@@ -191,16 +191,13 @@ async def run_local_testing_scan(
         )
 
     normalized_url = parsed.geturl()
+    job = None
+    target = None
 
-    # Find or create target
-    # First check if target with this URL exists (regardless of user, since URL is unique)
-    target = db.query(Target)\
-        .filter(Target.url == normalized_url)\
-        .first()
-
-    if not target:
-        # Target doesn't exist, create new one
-        try:
+    try:
+        # Find or create target
+        target = db.query(Target).filter(Target.url == normalized_url).first()
+        if not target:
             target = Target(
                 user_id=current_user.id,
                 url=normalized_url,
@@ -211,35 +208,24 @@ async def run_local_testing_scan(
             db.add(target)
             db.commit()
             db.refresh(target)
-        except Exception as e:
-            # If creation fails (e.g., race condition), try to fetch again
-            db.rollback()
-            target = db.query(Target)\
-                .filter(Target.url == normalized_url)\
-                .first()
-            if not target:
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail=f"Failed to create or find target: {str(e)}"
-                )
 
-    # Create scan job
-    job = ScanJob(
-        target_id=target.id,
-        user_id=current_user.id,
-        status=JobStatus.PENDING.value
-    )
-    db.add(job)
-    db.commit()
-    db.refresh(job)
-
-    try:
-        # Execute localhost testing scan (AddressSanitizer - primary tool)
-        scan_service = ScanService(db)
-        result = scan_service.execute_localhost_testing(job.id, source_path=scan_data.source_path)
+        # Create scan job
+        job = ScanJob(
+            target_id=target.id,
+            user_id=current_user.id,
+            status=JobStatus.PENDING.value
+        )
+        db.add(job)
+        db.commit()
         db.refresh(job)
-        
-        # Format alerts for response (combine from both tools)
+
+        # Execute localhost testing scan (AddressSanitizer + Ghauri; no source path required)
+        scan_service = ScanService(db)
+        source_path = getattr(scan_data, "source_path", None)
+        result = scan_service.execute_localhost_testing(job.id, source_path=source_path)
+        db.refresh(job)
+
+        # Format alerts for response (include user-friendly fields for report)
         formatted_alerts = []
         for alert in result.get("alerts", []):
             formatted_alerts.append({
@@ -247,6 +233,8 @@ async def run_local_testing_scan(
                 "risk": alert.get("risk", "Info"),
                 "description": alert.get("description", ""),
                 "solution": alert.get("solution", ""),
+                "location": alert.get("location", ""),
+                "severity_explanation": alert.get("severity_explanation", ""),
                 "evidence": alert.get("evidence", ""),
                 "url": alert.get("url", normalized_url),
                 "tool": alert.get("tool", "unknown")
@@ -264,16 +252,31 @@ async def run_local_testing_scan(
             completed_at=job.completed_at,
             error=result.get("error")
         )
+
     except Exception as e:
         logger.error(f"Local testing scan failed: {e}", exc_info=True)
-        # Update job status to failed
-        job.status = JobStatus.FAILED.value
-        job.completed_at = datetime.utcnow()
-        db.commit()
-        
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Scan failed: {str(e)}"
+        if db:
+            try:
+                db.rollback()  # Reset session after any flush/commit error
+                if job:
+                    job.status = JobStatus.FAILED.value
+                    job.completed_at = datetime.utcnow()
+                    db.commit()
+            except Exception:
+                db.rollback()
+        # Always return 200 with body so frontend shows the error instead of "request failed 500"
+        now = datetime.utcnow()
+        return LocalScanResponse(
+            job_id=job.job_id if job else uuid4(),
+            status="failed",
+            target_url=normalized_url,
+            environment="development",
+            alert_count=0,
+            alerts=[],
+            results={},
+            created_at=job.created_at if job else now,
+            completed_at=now,
+            error=str(e)
         )
 
 

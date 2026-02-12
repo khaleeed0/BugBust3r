@@ -9,11 +9,14 @@ export default defineConfig({
     strictPort: true,
     proxy: {
       '/api': {
-        target: 'http://localhost:8000', // Backend API URL
+        target: 'http://127.0.0.1:8000',
         changeOrigin: true,
         secure: false,
-        // Note: In Docker, the frontend uses VITE_API_URL env var directly in api.js
-        // This proxy is mainly for local development
+        configure: (proxy) => {
+          proxy.on('error', (err, req, res) => {
+            console.warn('[Vite proxy] Backend not reachable at 127.0.0.1:8000 - is start-backend.bat running?', err.message)
+          })
+        },
       }
     }
   },

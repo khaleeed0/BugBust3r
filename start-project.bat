@@ -403,7 +403,7 @@ if not errorlevel 1 (
     echo %YELLOW%Port 3000 is already in use. Frontend may already be running.%RESET%
 ) else (
     echo Starting React frontend on port 3000...
-    start "Bugbuster Frontend" cmd /k "npm run dev"
+    start "Bugbuster Frontend" cmd /k "cd /d \"%SCRIPT_DIR%frontend\" && npm run dev"
     echo Waiting for frontend to start...
     timeout /t 10 /nobreak >nul
     echo %GREEN%✓ Frontend is starting on http://localhost:3000%RESET%

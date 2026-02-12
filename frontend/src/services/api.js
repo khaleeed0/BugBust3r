@@ -1,30 +1,24 @@
 import axios from 'axios'
 
-// Get API URL from environment variable or use default
-// IMPORTANT: Browser must use localhost:8000, not backend:8000
-// The backend:8000 URL only works inside Docker network, not from browser
-// In Docker: VITE_API_URL should be http://localhost:8000 (for browser access)
-// Local dev: VITE_API_URL=http://localhost:8000 (or leave empty for default)
+// API base URL: use same-origin in dev so Vite proxy forwards /api to backend (no CORS, no direct 8000)
+// In production or when not using Vite dev server, use explicit backend URL
 const getApiUrl = () => {
-  // Check if we're in a browser (not SSR)
-  if (typeof window !== 'undefined') {
-    // Browser always needs to use localhost (or host IP), not Docker service names
-    const envUrl = import.meta.env.VITE_API_URL
-    
-    // If env URL contains 'backend:', replace with localhost (for browser access)
-    if (envUrl && envUrl.includes('backend:')) {
-      return envUrl.replace('backend:', 'localhost:')
-    }
-    
-    // Use environment variable if set and valid for browser
-    if (envUrl && (envUrl.includes('localhost') || envUrl.includes('127.0.0.1'))) {
-      return envUrl
-    }
-    
-    // Default: use localhost:8000 (works for both Docker and local dev)
-    return 'http://localhost:8000'
+  if (typeof window === 'undefined') {
+    return import.meta.env.VITE_API_URL || 'http://localhost:8000'
   }
-  return import.meta.env.VITE_API_URL || 'http://localhost:8000'
+  // In Vite dev (npm run dev): use empty string so requests go to same origin and Vite proxies /api -> localhost:8000
+  // This avoids "Cannot reach API" when the browser can't connect directly to port 8000
+  if (import.meta.env.DEV) {
+    return ''
+  }
+  const envUrl = import.meta.env.VITE_API_URL
+  if (envUrl && (envUrl.includes('localhost') || envUrl.includes('127.0.0.1'))) {
+    return envUrl
+  }
+  if (envUrl && envUrl.includes('backend:')) {
+    return envUrl.replace('backend:', 'localhost:')
+  }
+  return envUrl || 'http://localhost:8000'
 }
 
 const API_URL = getApiUrl()
@@ -34,8 +28,9 @@ if (typeof window !== 'undefined' && import.meta.env.DEV) {
   console.log('API URL:', API_URL)
 }
 
+// When API_URL is '' (dev + proxy), use /api/v1 so Vite proxies to backend
 export const api = axios.create({
-  baseURL: `${API_URL}/api/v1`,
+  baseURL: API_URL ? `${API_URL}/api/v1` : '/api/v1',
   headers: {
     'Content-Type': 'application/json',
   },

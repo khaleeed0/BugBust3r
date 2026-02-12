@@ -493,33 +493,62 @@ class NucleiTool(SecurityTool):
 
 
 class SQLMapTool(SecurityTool):
-    """SQLMap - SQL injection testing"""
-    
+    """SQLMap - SQL injection testing with optional crawl to discover URLs"""
+
     def __init__(self):
         super().__init__("security-tools:sqlmap", "sqlmap")
-    
-    def run(self, target_url: str, **kwargs) -> Dict:
-        """Run SQLMap on target URL"""
-        command = f"python3 /app/sqlmap/sqlmap.py -u {target_url} --batch --level=1 --risk=1 --output-dir=/output"
-        
+
+    def run(
+        self,
+        target_url: str,
+        is_localhost: bool = False,
+        crawl_depth: int = 0,
+        **kwargs
+    ) -> Dict:
+        """Run SQLMap on target URL. If crawl_depth > 0, crawl the site first to find links to test."""
+        from urllib.parse import urlparse
+        scan_url = target_url
+        if is_localhost:
+            parsed = urlparse(target_url)
+            if parsed.hostname in ("localhost", "127.0.0.1"):
+                scan_url = target_url.replace(
+                    f"{parsed.scheme}://{parsed.hostname}",
+                    f"{parsed.scheme}://host.docker.internal",
+                )
+        # Build command so crawl runs: --crawl=N discovers links, --forms parses forms
+        crawl_opts = ""
+        if crawl_depth and crawl_depth > 0:
+            depth = min(crawl_depth, 3)
+            crawl_opts = f" --crawl={depth} --answers=follow=Y,sitemap=N"
+        # Run in container: WORKDIR is /app/sqlmap
+        cmd_str = (
+            f"python3 sqlmap.py -u \"{scan_url}\" --batch --level=1 --risk=1 "
+            f"--output-dir=/output --forms{crawl_opts}"
+        )
+        command = ["sh", "-c", cmd_str]
+
+        if not docker_client.image_exists(self.image):
+            return {
+                "tool": self.tool_name,
+                "target": target_url,
+                "status": "failed",
+                "vulnerable": False,
+                "vulnerabilities": [],
+                "raw_output": "",
+                "error": f"SQLMap image '{self.image}' not found. Build: cd docker-tools/sqlmap && docker build -t {self.image} .",
+            }
+
         try:
             stdout, stderr, exit_code = docker_client.run_container(
                 image=self.image,
                 command=command,
                 volumes={},
-                remove=True
+                remove=True,
             )
-            
-            # Parse SQLMap results
+            out = (stdout or "") + "\n" + (stderr or "")
             vulnerabilities = []
-            if stdout:
-                # SQLMap outputs detailed information
-                if "sqlmap identified the following injection point" in stdout.lower():
-                    vulnerabilities.append({
-                        "vulnerable": True,
-                        "details": stdout
-                    })
-            
+            if stdout and "sqlmap identified the following injection point" in stdout.lower():
+                vulnerabilities.append({"vulnerable": True, "details": stdout[:2000]})
             return {
                 "tool": self.tool_name,
                 "target": target_url,
@@ -527,16 +556,19 @@ class SQLMapTool(SecurityTool):
                 "exit_code": exit_code,
                 "vulnerabilities": vulnerabilities,
                 "vulnerable": len(vulnerabilities) > 0,
-                "raw_output": stdout,
-                "error": stderr if exit_code != 0 else None
+                "raw_output": out[:8000],
+                "error": stderr if exit_code != 0 and stderr else None,
             }
         except Exception as e:
-            logger.error(f"SQLMap error: {e}")
+            logger.error(f"SQLMap error: {e}", exc_info=True)
             return {
                 "tool": self.tool_name,
                 "target": target_url,
                 "status": "failed",
-                "error": str(e)
+                "vulnerable": False,
+                "vulnerabilities": [],
+                "raw_output": "",
+                "error": str(e),
             }
 
 
@@ -817,6 +849,22 @@ class AddressSanitizerTool(SecurityTool):
           inside the container, compiled with ASan, and executed to demonstrate detection.
         """
         volumes: Dict[str, Dict[str, str]] = {}
+
+        if not docker_client.image_exists(self.image):
+            error_msg = (
+                f"AddressSanitizer Docker image '{self.image}' not found. "
+                f"Build it: cd docker-tools/addresssanitizer && docker build -t {self.image} ."
+            )
+            logger.error(error_msg)
+            return {
+                "tool": self.tool_name,
+                "status": "failed",
+                "exit_code": -1,
+                "errors": [],
+                "error_count": 0,
+                "raw_output": "",
+                "error": error_msg,
+            }
 
         if source_path and source_path.strip():
             # Mount provided host directory into /source (read-only)

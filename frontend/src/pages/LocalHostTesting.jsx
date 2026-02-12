@@ -5,7 +5,7 @@ import { api } from '../services/api'
 
 export default function LocalHostTesting() {
   const navigate = useNavigate()
-  const [targetUrl, setTargetUrl] = useState('http://localhost:3000')
+  const [targetUrl, setTargetUrl] = useState('http://localhost:3001')
   const [sourcePath, setSourcePath] = useState('')
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState(null)
@@ -21,6 +21,21 @@ export default function LocalHostTesting() {
     const urlPattern = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?/
     if (!urlPattern.test(targetUrl.trim())) {
       toast.error('Only localhost or 127.0.0.1 URLs are allowed')
+      return
+    }
+
+    // Don't scan this BugBust3r app — scan your target project instead (e.g. port 3001)
+    const currentOrigin = typeof window !== 'undefined' ? window.location.origin : ''
+    const targetOrigin = (() => {
+      try {
+        const u = new URL(targetUrl.trim())
+        return u.origin
+      } catch {
+        return ''
+      }
+    })()
+    if (currentOrigin && targetOrigin && currentOrigin === targetOrigin) {
+      toast.error('Do not scan this BugBust3r app. Enter your target project URL instead (e.g. http://localhost:3001).')
       return
     }
 
@@ -53,15 +68,23 @@ export default function LocalHostTesting() {
         label: 'LocalHostTesting',
         source_path: sourcePath.trim() || null,
       }, {
-        timeout: 300000 // 5 minutes for AddressSanitizer scans
+        timeout: 300000 // 5 minutes for AddressSanitizer + Ghauri
       })
       setResult(response.data)
-      toast.success('Localhost scan completed (AddressSanitizer + Ghauri)')
+      if (response.data.status === 'failed' && response.data.error) {
+        toast.error(response.data.error)
+      } else {
+        toast.success('Scan completed')
+      }
     } catch (error) {
       console.error('Scan error:', error)
-      const errorMessage = error.response?.data?.detail || error.message || 'Failed to run local scan'
+      const isNetworkError = !error.response && (error.message === 'Network Error' || error.code === 'ERR_NETWORK' || error.code === 'ECONNABORTED')
+      const detail = error.response?.data?.detail
+      const errMsg = Array.isArray(detail) ? detail.map((d) => d.msg || d).join(', ') : (detail || error.response?.data?.error)
+      const errorMessage = isNetworkError
+        ? 'Backend not reachable. Start it first: run start-backend.bat (or start-project.bat) so the API runs on port 8000, then try again.'
+        : (errMsg || error.message || 'Failed to run local scan')
       
-      // Handle authentication errors
       if (error.response?.status === 401) {
         toast.error('Authentication failed. Please login again.')
         localStorage.removeItem('token')
@@ -70,7 +93,16 @@ export default function LocalHostTesting() {
       } else if (error.response?.status === 400) {
         toast.error(errorMessage)
       } else {
-        toast.error(`Scan failed: ${errorMessage}`)
+        toast.error(errorMessage)
+        setResult({
+          target_url: targetUrl.trim(),
+          status: 'failed',
+          environment: 'development',
+          alert_count: 0,
+          alerts: [],
+          error: errorMessage,
+          network_error: isNetworkError,
+        })
       }
     } finally {
       setLoading(false)
@@ -105,41 +137,39 @@ export default function LocalHostTesting() {
               </span>
             </span>
           </div>
-          <p className="text-sm text-gray-600 mb-6">
+          <p className="text-sm text-gray-600 mb-4">
             Only <span className="font-semibold">http://localhost</span> or <span className="font-semibold">http://127.0.0.1</span> addresses are accepted.
-            Make sure the target service is accessible from the Docker network before launching the scan.
-            For best Ghauri (SQLi) results, use a URL with a query parameter (e.g. <code className="bg-gray-100 px-1 rounded">http://localhost:8000/item?id=1</code>).
+            Enter your <strong>target project</strong> URL (e.g. <code className="bg-gray-100 px-1 rounded">http://localhost:3001</code>). Do not use this app&apos;s URL (port 3000).
+          </p>
+          <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-3 mb-6">
+            <strong>Tip:</strong> Memory safety (AddressSanitizer) runs only when you provide a <strong>C/C++ source path</strong>—the tool discovers real issues in your code. SQL injection (Ghauri + SQLMap) runs on the <em>exact URL</em> you enter. Use a URL with a query parameter for SQLi (e.g. <code className="bg-amber-100 px-1 rounded">http://localhost:3001/product?id=1</code>). Run the scan with different URLs to cover more pages.
           </p>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label htmlFor="localTarget" className="block text-sm font-medium text-gray-700 mb-2">
-                Localhost URL
+                Target URL (e.g. your app or lala store)
               </label>
               <input
                 id="localTarget"
                 type="text"
                 value={targetUrl}
                 onChange={(e) => setTargetUrl(e.target.value)}
-                placeholder="http://localhost:3000"
+                placeholder="http://localhost:3001"
                 className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-transparent text-gray-900"
               />
             </div>
             <div>
               <label htmlFor="sourcePath" className="block text-sm font-medium text-gray-700 mb-2">
-                Source Code Path (Optional)
-                <span className="text-xs text-gray-500 ml-2">Absolute path to your project's source code directory</span>
+                C/C++ source path <span className="text-gray-500 font-normal">(optional — for buffer overflow / memory checks)</span>
               </label>
               <input
                 id="sourcePath"
                 type="text"
                 value={sourcePath}
                 onChange={(e) => setSourcePath(e.target.value)}
-                placeholder="C:\Users\username\project\src or /home/user/project/src"
+                placeholder="e.g. /path/to/your/cpp-project or leave empty to skip memory scan"
                 className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-transparent text-gray-900"
               />
-              <p className="mt-2 text-xs text-gray-500">
-                💡 If left empty, AddressSanitizer will run a demo vulnerable C program. Provide the absolute path to your C/C++ source directory to scan your project.
-              </p>
             </div>
             <button
               type="submit"
@@ -151,7 +181,7 @@ export default function LocalHostTesting() {
                   <span className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></span>
                   Scanning... This may take 1-3 minutes for large codebases
                 </span>
-              ) : 'Run Localhost Scan (AddressSanitizer + Ghauri)'}
+              ) : 'Run Localhost Scan'}
             </button>
           </form>
         </div>
@@ -191,57 +221,97 @@ export default function LocalHostTesting() {
               <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
                 <p className="text-sm font-semibold text-red-800 mb-2">Scan Error:</p>
                 <p className="text-sm text-red-700 whitespace-pre-wrap">{result.error}</p>
+                {result.network_error && (
+                  <p className="text-sm text-red-700 mt-3">
+                    <strong>Fix:</strong> Run <code className="bg-red-100 px-1 rounded">start-backend.bat</code> in the BugBust3r folder (starts API on port 8000). Then refresh and run the scan again.{' '}
+                    <a href="http://127.0.0.1:8000/health" target="_blank" rel="noopener noreferrer" className="underline font-medium text-red-800 hover:text-red-900">
+                      Check if API is up →
+                    </a>
+                  </p>
+                )}
               </div>
             )}
 
             {result.alerts?.length > 0 ? (
-              <div className="space-y-4">
+              <div className="space-y-6">
+                <p className="text-sm text-gray-600">
+                  This report is written for you. Each finding explains what was found, where it is, how to fix it, and how serious it is.
+                </p>
                 {result.alerts.map((alert, index) => (
-                  <div key={index} className="border border-gray-200 rounded-lg p-4 hover:border-cyan-300 transition-colors">
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center gap-2">
-                        <h4 className="text-lg font-semibold text-gray-900">{alert.name || 'Security Issue'}</h4>
-                        <span className={`px-2 py-0.5 rounded text-xs font-medium ${
-                          alert.tool === 'ghauri' ? 'bg-violet-100 text-violet-800' : 'bg-cyan-100 text-cyan-800'
-                        }`}>
-                          {alert.tool === 'ghauri' ? 'Ghauri' : (alert.tool || 'AddressSanitizer')}
-                        </span>
-                      </div>
-                      <span className={`text-sm font-medium px-2 py-1 rounded ${
+                  <div key={index} className="border border-gray-200 rounded-xl p-5 bg-white shadow-sm hover:border-cyan-300 transition-colors">
+                    <div className="flex items-center justify-between flex-wrap gap-2 mb-4">
+                      <h4 className="text-xl font-semibold text-gray-900">{alert.name || 'Security issue'}</h4>
+                      <span className={`text-sm font-medium px-3 py-1.5 rounded-full ${
                         alert.risk === 'CRITICAL' || alert.risk === 'ERROR' ? 'bg-red-100 text-red-800' :
                         alert.risk === 'HIGH' || alert.risk === 'WARNING' ? 'bg-orange-100 text-orange-800' :
                         alert.risk === 'MEDIUM' ? 'bg-yellow-100 text-yellow-800' :
                         'bg-gray-100 text-gray-800'
                       }`}>
-                        {alert.risk || 'Info'}
+                        Severity: {alert.risk || 'Info'}
                       </span>
                     </div>
-                    <p className="text-sm text-gray-600 mb-2">{alert.description || 'No description provided.'}</p>
-                    {alert.solution && (
-                      <p className="text-sm text-gray-500">
-                        <span className="font-semibold">Recommendation:</span> {alert.solution}
-                      </p>
+                    {alert.severity_explanation && (
+                      <p className="text-sm text-gray-600 mb-3 italic">{alert.severity_explanation}</p>
                     )}
+                    <div className="space-y-3 text-sm">
+                      <div>
+                        <p className="font-semibold text-gray-700 mb-1">What we found</p>
+                        <p className="text-gray-600">{alert.description || 'No description provided.'}</p>
+                      </div>
+                      {alert.location && (
+                        <div>
+                          <p className="font-semibold text-gray-700 mb-1">Where</p>
+                          <p className="text-gray-600 font-mono text-xs bg-gray-50 px-2 py-1 rounded">{alert.location}</p>
+                        </div>
+                      )}
+                      {alert.solution && (
+                        <div>
+                          <p className="font-semibold text-gray-700 mb-1">How to fix it</p>
+                          <p className="text-gray-600">{alert.solution}</p>
+                        </div>
+                      )}
+                    </div>
+                    <p className="mt-3 text-xs text-gray-500">
+                      Detected by: {alert.tool === 'ghauri' ? 'SQL injection (Ghauri)' : alert.tool === 'sqlmap' ? 'SQL injection with crawl (SQLMap)' : 'Memory safety (AddressSanitizer)'}
+                    </p>
                   </div>
                 ))}
               </div>
             ) : (
               <div className="text-center py-10 border border-dashed border-gray-300 rounded-lg">
-                <p className="text-gray-600 font-medium">No issues found by AddressSanitizer or Ghauri 🎉</p>
-                <p className="text-sm text-gray-500 mt-2">No memory safety (buffer overflow, use-after-free) or SQL injection findings detected.</p>
+                <p className="text-gray-600 font-medium">No issues found by this scan</p>
+                <p className="text-sm text-gray-500 mt-2">We checked for memory safety (buffer overflows) and SQL injection on the URL you entered. To look for more bugs, try a URL that includes a query parameter (e.g. <code className="bg-gray-100 px-1 rounded">?id=1</code>) for SQL injection, or run the scan on other pages.</p>
               </div>
             )}
             
-            {result.alerts?.length > 0 && (
+            {(result.alerts?.length > 0 || result.results) && (
               <div className="mt-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
-                <p className="text-sm font-semibold text-blue-800 mb-2">Scan Summary:</p>
+                <p className="text-sm font-semibold text-blue-800 mb-2">Scan summary</p>
+                <p className="text-sm text-blue-700 mb-2">
+                  We found <strong>{result.alerts?.length ?? 0}</strong> finding{(result.alerts?.length ?? 0) !== 1 ? 's' : ''} on the URL you scanned. The report above explains each one in plain language. To look for more issues (including SQL injection), run the scan again with other URLs or add <code className="bg-blue-100 px-1 rounded">?id=1</code> to your URL.
+                </p>
                 <div className="flex flex-wrap gap-2">
                   <span className="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-xs font-medium">
-                    {result.alerts.length} alert{result.alerts.length !== 1 ? 's' : ''} (AddressSanitizer + Ghauri)
+                    {result.alerts?.length ?? 0} finding{(result.alerts?.length ?? 0) !== 1 ? 's' : ''}
                   </span>
+                  {result.results?.addresssanitizer && (
+                    <span className="px-3 py-1 bg-cyan-100 text-cyan-800 rounded-full text-xs font-medium" title={result.results.addresssanitizer.message || result.results.addresssanitizer.error || ''}>
+                      ASan: {result.results.addresssanitizer.status === 'skipped' ? 'skipped (no source path)' : result.results.addresssanitizer.status === 'completed_with_issues' ? `${result.results.addresssanitizer.error_count ?? 0} issue(s)` : result.results.addresssanitizer.status === 'failed' && result.results.addresssanitizer.error ? `failed` : result.results.addresssanitizer.status}
+                    </span>
+                  )}
                   {result.results?.ghauri && (
-                    <span className="px-3 py-1 bg-violet-100 text-violet-800 rounded-full text-xs font-medium">
-                      Ghauri: {result.results.ghauri.vulnerable ? 'SQLi detected' : 'no SQLi'}
+                    <span className="px-3 py-1 bg-violet-100 text-violet-800 rounded-full text-xs font-medium" title={result.results.ghauri.error || ''}>
+                      Ghauri: {result.results.ghauri.vulnerable ? 'SQLi' : result.results.ghauri.status}
+                    </span>
+                  )}
+                  {result.results?.sqlmap && (
+                    <span className="px-3 py-1 bg-emerald-100 text-emerald-800 rounded-full text-xs font-medium" title={result.results.sqlmap.error || ''}>
+                      SQLMap (crawl): {result.results.sqlmap.vulnerable ? 'SQLi' : result.results.sqlmap.status}
+                    </span>
+                  )}
+                  {result.error && (
+                    <span className="px-3 py-1 bg-red-100 text-red-800 rounded-full text-xs font-medium">
+                      Error: {result.error}
                     </span>
                   )}
                 </div>

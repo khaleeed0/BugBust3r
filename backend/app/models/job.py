@@ -114,7 +114,7 @@ class ToolExecution(Base):
     tool_id = Column(Integer, ForeignKey("tools.id"), nullable=False, index=True)
     stage_number = Column(Integer, nullable=False)  # 1-6 for the stages
     stage_name = Column(String(200), nullable=False)  # e.g., "Stage 1: Subdomain Enumeration"
-    status = Column(String(20), default="pending")  # pending, running, completed, failed
+    status = Column(String(20), default="pending")  # pending, running, completed, failed (DB column; keep ≤20 chars)
     execution_time = Column(Integer, nullable=True)  # seconds
     started_at = Column(DateTime, nullable=True)
     completed_at = Column(DateTime, nullable=True)

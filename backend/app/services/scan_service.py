@@ -25,6 +25,48 @@ from app.docker.tools import (
 logger = logging.getLogger(__name__)
 
 
+def _parse_asan_error_for_user(raw_block: str, full_output: str = None) -> Dict:
+    """Parse AddressSanitizer raw output into user-friendly fields. Use full_output for location (compiler line is often before the error block)."""
+    import re
+    raw = (raw_block or "") + "\n" + (full_output or "")
+    bug_type = "Memory safety violation"
+    location = "Unknown location"
+    # e.g. "ERROR: AddressSanitizer: stack-buffer-overflow" or "SUMMARY: AddressSanitizer: stack-buffer-overflow"
+    m = re.search(r"AddressSanitizer:\s*([a-z\-]+)", raw, re.I)
+    if m:
+        kind = m.group(1).strip()
+        if "stack-buffer-overflow" in kind:
+            bug_type = "Stack buffer overflow"
+        elif "heap-buffer-overflow" in kind:
+            bug_type = "Heap buffer overflow"
+        elif "use-after-free" in kind:
+            bug_type = "Use-after-free"
+        elif "memory-leak" in kind or "leak" in kind:
+            bug_type = "Memory leak"
+        else:
+            bug_type = kind.replace("-", " ").title()
+    # Location: match "filename.cpp:line" or "path/filename.cpp:line" anywhere in output
+    file_line = re.search(r"([^/\\\s]+\.(?:c|cpp|cc)):(\d+)", raw)
+    line_in_parens = re.search(r"\(line\s+(\d+)\)", raw)
+    file_only = re.search(r"[/\\]([^/\\]+\.(?:c|cpp|cc))(?:[\s:]|$)", raw)
+    if file_line:
+        location = f"File {file_line.group(1)}, line {file_line.group(2)}"
+    elif file_only and line_in_parens:
+        location = f"File {file_only.group(1)}, line {line_in_parens.group(1)}"
+    elif line_in_parens:
+        location = f"Line {line_in_parens.group(1)}"
+    elif file_only:
+        location = f"File {file_only.group(1)}"
+    return {
+        "bug_type": bug_type,
+        "location": location,
+        "what_happened": f"The program wrote or read past the end of a buffer in memory ({bug_type.lower()}). This can crash the application or be exploited by attackers.",
+        "how_to_fix": "Use safe functions (e.g. strncpy instead of strcpy), check buffer sizes before copying, or use std::string in C++. Fix the code at the location above.",
+        "severity": "High",
+        "severity_explanation": "Memory bugs can lead to crashes or security exploits.",
+    }
+
+
 class ScanService:
     """Service for orchestrating security scans"""
     
@@ -55,12 +97,14 @@ class ScanService:
         """Store tool execution output in database"""
         import json
         
-        # Normalize status to fit database constraint (max 50 chars)
-        status = result.get("status", "completed")
-        if status == "completed_with_alerts":
-            status = "completed"  # Store as completed, alerts are in findings
-        elif len(status) > 50:
-            status = status[:47] + "..."
+        # Normalize status to fit database constraint (status column is VARCHAR(20))
+        status = (result.get("status") or "completed").strip()
+        if status in ("completed_with_alerts", "completed_with_issues", "success"):
+            status = "completed"
+        elif len(status) > 20:
+            status = (status[:17] + "...")[:20]
+        if not status:
+            status = "completed"
         
         execution = ToolExecution(
             job_id=job.job_id,
@@ -317,63 +361,66 @@ class ScanService:
                 "vulnerabilities": []
             }
 
-            # Get tools from database (includes AddressSanitizer and Ghauri)
+            # Get tools from database (includes AddressSanitizer, Ghauri, SQLMap)
             tools_map = self._get_tools_map()
             asan_tool = tools_map.get('addresssanitizer')
             ghauri_tool = tools_map.get('ghauri')
+            sqlmap_tool = tools_map.get('sqlmap')
 
-            # Stage 1: AddressSanitizer - Primary tool for buffer overflow and memory safety analysis
-            logger.info(f"Starting AddressSanitizer run for job {job_id}, target: {target_url}")
-            try:
-                stage_start = datetime.utcnow()
-                asan_result = self.tools['addresssanitizer'].run(source_path=source_path)
-                execution_time = int((datetime.utcnow() - stage_start).total_seconds())
+            # Stage 1: AddressSanitizer - only when user provides C/C++ source path (no demo; tool discovers only)
+            if source_path and source_path.strip():
+                logger.info(f"Starting AddressSanitizer run for job {job_id}, source: {source_path}")
+                try:
+                    stage_start = datetime.utcnow()
+                    asan_result = self.tools['addresssanitizer'].run(source_path=source_path.strip())
+                    execution_time = int((datetime.utcnow() - stage_start).total_seconds())
 
-                # Store tool execution
-                if asan_tool:
-                    self._store_tool_execution(
-                        job,
-                        asan_tool,
-                        1,
-                        "Localhost Testing: AddressSanitizer Memory Safety Analysis",
-                        {"target_url": target_url, "source_path": source_path},
-                        asan_result,
-                        execution_time,
-                    )
+                    if asan_tool:
+                        self._store_tool_execution(
+                            job,
+                            asan_tool,
+                            1,
+                            "Localhost Testing: AddressSanitizer Memory Safety Analysis",
+                            {"target_url": target_url, "source_path": source_path},
+                            asan_result,
+                            execution_time,
+                        )
 
-                all_results["results"]["addresssanitizer"] = asan_result
+                    all_results["results"]["addresssanitizer"] = asan_result
 
-                # Convert ASan errors to alerts/findings
-                for err in asan_result.get("errors", []):
-                    raw_block = err.get("raw", "")
-                    alert = {
-                        "name": "AddressSanitizer memory error",
-                        "risk": "High",
-                        "description": "AddressSanitizer detected a memory safety violation.",
-                        "solution": "Investigate the reported stack trace and fix the offending code.",
-                        "evidence": raw_block[:500] if raw_block else "",
-                        "url": target_url,
-                        "tool": "addresssanitizer",
-                        "category": "memory-safety",
-                    }
-                    all_results["alerts"].append(alert)
-                    all_results["findings"].append(
-                        {
+                    asan_full = asan_result.get("raw_output", "")
+                    for err in asan_result.get("errors", []):
+                        raw_block = err.get("raw", "")
+                        parsed = _parse_asan_error_for_user(raw_block, full_output=asan_full)
+                        alert = {
+                            "name": parsed["bug_type"],
+                            "risk": parsed["severity"],
+                            "description": parsed["what_happened"],
+                            "solution": parsed["how_to_fix"],
+                            "location": parsed["location"],
+                            "severity_explanation": parsed.get("severity_explanation", ""),
+                            "evidence": raw_block[:500] if raw_block else "",
+                            "url": target_url,
                             "tool": "addresssanitizer",
-                            "message": "AddressSanitizer detected a memory safety violation.",
-                            "raw": raw_block,
+                            "category": "memory-safety",
                         }
-                    )
+                        all_results["alerts"].append(alert)
+                        all_results["findings"].append(
+                            {"tool": "addresssanitizer", "message": "AddressSanitizer detected a memory safety violation.", "raw": raw_block}
+                        )
 
-                logger.info(
-                    f"AddressSanitizer run completed: "
-                    f"{asan_result.get('error_count', 0)} memory errors detected"
-                )
-            except Exception as e:
-                logger.error(f"AddressSanitizer run failed: {e}", exc_info=True)
+                    logger.info(f"AddressSanitizer completed: {asan_result.get('error_count', 0)} memory errors detected")
+                except Exception as e:
+                    logger.error(f"AddressSanitizer run failed: {e}", exc_info=True)
+                    try:
+                        self.db.rollback()
+                    except Exception:
+                        pass
+                    all_results["results"]["addresssanitizer"] = {"status": "failed", "error": str(e)}
+            else:
                 all_results["results"]["addresssanitizer"] = {
-                    "status": "failed",
-                    "error": str(e),
+                    "status": "skipped",
+                    "message": "No C/C++ source path provided. To scan your code for buffer overflows and memory issues, provide the path to your project folder.",
                 }
 
             # Stage 2: Ghauri - SQL injection detection/exploitation (blind SQLi, PostgreSQL-friendly)
@@ -398,10 +445,12 @@ class ScanService:
 
                 if ghauri_result.get("vulnerable"):
                     alert = {
-                        "name": "SQL Injection (Ghauri)",
+                        "name": "SQL injection",
                         "risk": "CRITICAL",
-                        "description": "Ghauri detected a possible SQL injection. Use parameterized queries and sanitize inputs.",
-                        "solution": "Use parameterized queries/prepared statements and sanitize all user inputs.",
+                        "description": "The application accepts user input that is sent directly to the database. An attacker can inject malicious SQL to read, change, or delete data.",
+                        "solution": "Use parameterized queries or prepared statements for all database queries. Never build SQL by concatenating user input.",
+                        "location": f"URL or parameter tested: {target_url}",
+                        "severity_explanation": "SQL injection can expose or destroy your data and may allow full control of the server.",
                         "evidence": (ghauri_result.get("raw_output") or "")[:500],
                         "url": target_url,
                         "tool": "ghauri",
@@ -422,66 +471,65 @@ class ScanService:
                 logger.info(f"Ghauri run completed: vulnerable={ghauri_result.get('vulnerable', False)}")
             except Exception as e:
                 logger.error(f"Ghauri run failed: {e}", exc_info=True)
+                try:
+                    self.db.rollback()
+                except Exception:
+                    pass
                 all_results["results"]["ghauri"] = {
                     "status": "failed",
                     "error": str(e),
                 }
 
-            # SQLMap is optional - commented out for now, but can be enabled later if needed
-            # Uncomment below to enable SQLMap scanning
-            # Stage 2: SQLMap - SQL injection testing (OPTIONAL)
-            # logger.info(f"Starting SQLMap scan for job {job_id}, target: {target_url}")
-            # try:
-            #     stage_start = datetime.utcnow()
-            #     sqlmap_result = self.tools['sqlmap'].run(target_url=target_url)
-            #     execution_time = int((datetime.utcnow() - stage_start).total_seconds())
-            #     
-            #     # Store tool execution
-            #     if sqlmap_tool:
-            #         self._store_tool_execution(
-            #             job, sqlmap_tool, 2, "Localhost Testing: SQL Injection Testing",
-            #             {"target_url": target_url}, sqlmap_result, execution_time
-            #         )
-            #     
-            #     all_results["results"]["sqlmap"] = sqlmap_result
-            #     
-            #     # Convert SQLMap vulnerabilities to alerts
-            #     if sqlmap_result.get("vulnerable"):
-            #         alert = {
-            #             "name": "SQL Injection Vulnerability",
-            #             "risk": "CRITICAL",
-            #             "description": "SQL injection vulnerability detected in the target application",
-            #             "solution": "Use parameterized queries and sanitize all user inputs",
-            #             "evidence": sqlmap_result.get("raw_output", "")[:500],
-            #             "url": target_url,
-            #             "tool": "sqlmap"
-            #         }
-            #         all_results["alerts"].append(alert)
-            #         all_results["vulnerabilities"].extend(sqlmap_result.get("vulnerabilities", []))
-            #         
-            #         # Create database finding if tool exists
-            #         if sqlmap_tool:
-            #             vuln_def = self._get_or_create_vulnerability(
-            #                 "SQL Injection",
-            #                 "SQL injection vulnerability detected",
-            #                 "Sanitize all user inputs and use parameterized queries"
-            #             )
-            #             self._create_finding(
-            #                 job, target, sqlmap_tool, vuln_def,
-            #                 FindingSeverity.CRITICAL,
-            #                 location=target_url,
-            #                 evidence=sqlmap_result.get("raw_output", ""),
-            #                 confidence="high"
-            #             )
-            #     
-            #     logger.info(f"SQLMap scan completed: vulnerable={sqlmap_result.get('vulnerable', False)}")
-            # except Exception as e:
-            #     logger.error(f"SQLMap scan failed: {e}", exc_info=True)
-            #     all_results["results"]["sqlmap"] = {
-            #         "status": "failed",
-            #         "error": str(e)
-            #     }
-            
+            # Stage 3: SQLMap with crawl - discover links from target URL and test for SQL injection
+            logger.info(f"Starting SQLMap (crawl) run for job {job_id}, target: {target_url}")
+            try:
+                stage_start = datetime.utcnow()
+                sqlmap_result = self.tools['sqlmap'].run(
+                    target_url=target_url,
+                    is_localhost=True,
+                    crawl_depth=1,
+                )
+                execution_time = int((datetime.utcnow() - stage_start).total_seconds())
+
+                if sqlmap_tool:
+                    self._store_tool_execution(
+                        job,
+                        sqlmap_tool,
+                        3,
+                        "Localhost Testing: SQLMap SQL Injection (crawl)",
+                        {"target_url": target_url, "crawl_depth": 1},
+                        sqlmap_result,
+                        execution_time,
+                    )
+
+                all_results["results"]["sqlmap"] = sqlmap_result
+
+                if sqlmap_result.get("vulnerable"):
+                    alert = {
+                        "name": "SQL injection (SQLMap)",
+                        "risk": "CRITICAL",
+                        "description": "SQLMap found a parameter that sends user input directly to the database. An attacker can inject SQL to read, change, or delete data.",
+                        "solution": "Use parameterized queries or prepared statements. Never concatenate user input into SQL strings.",
+                        "location": f"URL tested (after crawling): {target_url}",
+                        "severity_explanation": "SQL injection can expose or destroy data and may allow full control of the server.",
+                        "evidence": (sqlmap_result.get("raw_output") or "")[:500],
+                        "url": target_url,
+                        "tool": "sqlmap",
+                        "category": "sql-injection",
+                    }
+                    all_results["alerts"].append(alert)
+                logger.info(f"SQLMap run completed: vulnerable={sqlmap_result.get('vulnerable', False)}")
+            except Exception as e:
+                logger.error(f"SQLMap run failed: {e}", exc_info=True)
+                try:
+                    self.db.rollback()
+                except Exception:
+                    pass
+                all_results["results"]["sqlmap"] = {
+                    "status": "failed",
+                    "error": str(e),
+                }
+
             # Update job status
             job.status = JobStatus.COMPLETED.value
             job.completed_at = datetime.utcnow()
